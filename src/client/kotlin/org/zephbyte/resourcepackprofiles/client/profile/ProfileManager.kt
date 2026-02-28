@@ -39,7 +39,13 @@ object ProfileManager {
     fun hasProfile(name: String): Boolean = name in profiles
 
     fun getProfiles(): List<ResourcePackProfile> {
-        return profiles.values.sortedBy { it.name.lowercase() }
+        return profiles.values.sortedWith(compareByDescending<ResourcePackProfile> { it.favorite }.thenBy { it.name.lowercase() })
+    }
+
+    fun toggleFavorite(name: String) {
+        val profile = profiles[name] ?: return
+        profiles[name] = profile.copy(favorite = !profile.favorite)
+        save()
     }
 
     fun saveCurrentAsProfile(name: String) {

@@ -3,5 +3,6 @@ package org.zephbyte.resourcepackprofiles.client.profile
 data class ResourcePackProfile(
     val name: String,
     val packIds: List<String>,
-    val customIcon: String? = null
+    val customIcon: String? = null,
+    val favorite: Boolean = false
 )

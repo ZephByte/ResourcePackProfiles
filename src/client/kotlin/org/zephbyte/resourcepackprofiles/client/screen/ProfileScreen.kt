@@ -62,6 +62,12 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         for ((index, profile) in visibleProfiles.withIndex()) {
             val y = listTop + index * entryHeight
 
+            val starLabel = if (profile.favorite) "\u2605" else "\u2606"
+            addDrawableChild(ButtonWidget.builder(Text.literal(starLabel)) {
+                ProfileManager.toggleFavorite(profile.name)
+                rebuildProfileButtons()
+            }.dimensions(width / 2 + 38, y, 20, 20).build())
+
             addDrawableChild(ButtonWidget.builder(Text.literal("Edit")) { client?.setScreen(EditProfileScreen(this, profile.name)) }
                 .dimensions(width / 2 + 60, y, 40, 20)
                 .build())
