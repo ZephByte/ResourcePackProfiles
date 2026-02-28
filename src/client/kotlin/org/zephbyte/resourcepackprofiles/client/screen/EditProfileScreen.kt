@@ -74,12 +74,18 @@ class EditProfileScreen(
         // Change Icon button
         addDrawableChild(ButtonWidget.builder(Text.literal("Icon...")) {
             Thread {
-                val success = ProfileIconManager.openFilePickerAndImport(originalName)
-                if (success) {
-                    client?.execute { }
-                }
+                ProfileIconManager.openFilePickerAndImport(originalName)
             }.start()
         }.dimensions(centerX + 104, 16, 40, 20).build())
+
+        // Remove Icon button
+        addDrawableChild(ButtonWidget.builder(Text.literal("✕")) {
+            ProfileIconManager.deleteCustomIcon(
+                ProfileManager.getProfiles().find { it.name == originalName } ?: return@builder
+            )
+            ProfileManager.setCustomIcon(originalName, null)
+            ProfileIconManager.invalidate(originalName)
+        }.dimensions(centerX + 148, 16, 20, 20).build())
 
         // Save & Cancel at bottom
         addDrawableChild(ButtonWidget.builder(Text.literal("Done")) { onSave() }
@@ -92,7 +98,7 @@ class EditProfileScreen(
         val client = client ?: return
         val currentSet = selectedPacks.toSet()
         availablePacks = client.resourcePackManager.profiles
-            .filter { it.getSource().canBeEnabledLater() }
+            .filter { it.getSource().canBeEnabledLater() && !it.isRequired }
             .map { it.id }
             .filter { it !in currentSet }
             .toMutableList()

@@ -13,6 +13,7 @@ object ProfileManager {
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
     private val configPath: Path = Path.of("config", "resourcepackprofiles.json")
     private val profiles = mutableMapOf<String, ResourcePackProfile>()
+    private var lastActiveProfileName: String? = null
 
     fun load() {
         profiles.clear()
@@ -48,6 +49,7 @@ object ProfileManager {
 
         val existing = profiles[name]
         profiles[name] = ResourcePackProfile(name, optionsPacks, existing?.customIcon)
+        lastActiveProfileName = name
         save()
         ProfileIconManager.invalidate(name)
     }
@@ -57,6 +59,7 @@ object ProfileManager {
         if (profile != null) {
             ProfileIconManager.deleteCustomIcon(profile)
         }
+        if (lastActiveProfileName == name) lastActiveProfileName = null
         save()
     }
 
@@ -90,6 +93,7 @@ object ProfileManager {
             }
         }
 
+        if (lastActiveProfileName == oldName) lastActiveProfileName = newName
         ProfileIconManager.invalidate(oldName)
         save()
         return true
@@ -99,6 +103,16 @@ object ProfileManager {
         val profile = profiles[name] ?: return
         profiles[name] = profile.copy(customIcon = filename)
         save()
+    }
+
+    fun isActiveProfile(profile: ResourcePackProfile): Boolean {
+        val client = MinecraftClient.getInstance()
+        val currentPacks = client.options.resourcePacks.toList()
+        if (profile.packIds != currentPacks) return false
+        // If we know which profile was last applied/saved, only mark that one
+        if (lastActiveProfileName != null) return profile.name == lastActiveProfileName
+        // Fallback: first matching profile wins (no save/load yet this session)
+        return ProfileManager.getProfiles().first { it.packIds == currentPacks }.name == profile.name
     }
 
     fun applyProfile(profile: ResourcePackProfile): List<String> {
@@ -128,6 +142,7 @@ object ProfileManager {
         logger.info("resourcePackManager.enabledProfiles AFTER setEnabledProfiles: {}", enabledAfter)
 
         client.reloadResources()
+        lastActiveProfileName = profile.name
 
         return missingIds
     }

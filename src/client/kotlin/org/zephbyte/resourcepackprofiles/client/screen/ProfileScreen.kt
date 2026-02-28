@@ -129,11 +129,17 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             context.drawTexture(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, iconSize, iconSize, iconSize, iconSize)
 
             // Draw name label shifted right to make room for icon — highlight on hover
-            val label = "${profile.name} (${profile.packIds.size} packs)"
+            val isActive = ProfileManager.isActiveProfile(profile)
+            val suffix = if (isActive) " (Active)" else " (${profile.packIds.size} packs)"
+            val label = "${profile.name}$suffix"
             val nameX = iconX + iconSize + 4
             val nameWidth = textRenderer.getWidth(label)
             val isHoveringName = mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight
-            val nameColor = if (isHoveringName) 0xFFFF55 or (0xFF shl 24) else 0xFFFFFF or (0xFF shl 24)
+            val nameColor = when {
+                isHoveringName -> 0xFFFF55 or (0xFF shl 24)
+                isActive -> 0x55FF55 or (0xFF shl 24)
+                else -> 0xFFFFFF or (0xFF shl 24)
+            }
             context.drawText(textRenderer, Text.literal(label), nameX, y + 5, nameColor, true)
         }
 
@@ -160,19 +166,6 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         for ((index, profile) in visibleProfiles.withIndex()) {
             val y = listTop + index * entryHeight
             val iconX = width / 2 - 150
-
-            if (mouseX >= iconX && mouseX < iconX + iconSize && mouseY >= y && mouseY < y + iconSize) {
-                // Open file picker on a separate thread to avoid blocking the render thread
-                Thread {
-                    val success = ProfileIconManager.openFilePickerAndImport(profile.name)
-                    if (success) {
-                        client?.execute {
-                            rebuildProfileButtons()
-                        }
-                    }
-                }.start()
-                return true
-            }
 
             // Click on profile name → open edit screen
             val nameX = iconX + iconSize + 4

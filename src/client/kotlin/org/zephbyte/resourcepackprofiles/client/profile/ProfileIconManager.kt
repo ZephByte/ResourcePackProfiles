@@ -170,7 +170,8 @@ object ProfileIconManager {
         resized.close()
 
         ProfileManager.setCustomIcon(profileName, fileName)
-        invalidate(profileName)
+        // Defer texture invalidation to the render thread
+        MinecraftClient.getInstance().execute { invalidate(profileName) }
     }
 
     fun openFilePickerAndImport(profileName: String): Boolean {
