@@ -63,7 +63,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
                 .dimensions(width / 2 + 60, y, 40, 20)
                 .build())
 
-            addDrawableChild(ButtonWidget.builder(Text.literal("X")) { onDelete(profile.name) }
+            addDrawableChild(ButtonWidget.builder(Text.literal("\uD83D\uDDD1")) { onDelete(profile.name) }
                 .dimensions(width / 2 + 104, y, 20, 20)
                 .build())
         }
@@ -106,15 +106,17 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
         super.render(context, mouseX, mouseY, delta)
 
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 12, 0xFFFFFF)
+        // Title
+        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 16, 0xFFFFFF.toInt() or (0xFF shl 24))
 
+        // Profile list labels
         val profiles = ProfileManager.getProfiles()
         val visibleProfiles = profiles.drop(scrollOffset).take(maxVisibleEntries)
 
         for ((index, profile) in visibleProfiles.withIndex()) {
             val y = listTop + index * entryHeight
             val label = "${profile.name} (${profile.packIds.size} packs)"
-            context.drawTextWithShadow(textRenderer, label, width / 2 - 152, y + 6, 0xFFFFFF)
+            context.drawText(textRenderer, Text.literal(label), width / 2 - 150, y + 5, 0xFFFFFF.toInt() or (0xFF shl 24), true)
         }
 
         if (profiles.isEmpty()) {
@@ -123,12 +125,13 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
                 Text.literal("No profiles saved"),
                 width / 2,
                 listTop + 20,
-                0x888888
+                0xAAAAAA.toInt() or (0xFF shl 24)
             )
         }
 
+        // Status message
         if (statusTicks > 0) {
-            context.drawCenteredTextWithShadow(textRenderer, statusMessage, width / 2, height - 52, 0x55FF55)
+            context.drawCenteredTextWithShadow(textRenderer, statusMessage, width / 2, height - 52, 0x55FF55.toInt() or (0xFF shl 24))
         }
     }
 
