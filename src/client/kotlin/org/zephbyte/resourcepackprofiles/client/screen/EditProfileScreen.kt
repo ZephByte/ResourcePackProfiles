@@ -165,6 +165,15 @@ class EditProfileScreen(
         super.render(context, mouseX, mouseY, delta)
 
         val centerX = width / 2
+
+        // Draw current profile icon next to the name field
+        val profile = ProfileManager.getProfiles().find { it.name == originalName }
+        if (profile != null) {
+            val iconId = ProfileIconManager.getIconId(profile)
+            val iconX = centerX - 124
+            val iconY = 16
+            context.drawTexture(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, 20, 20, 20, 20)
+        }
         val columnWidth = centerX - 12
         val leftX = 4
         val rightX = centerX + 8

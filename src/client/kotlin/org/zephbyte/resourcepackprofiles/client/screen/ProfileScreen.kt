@@ -23,20 +23,20 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     private val iconSize = 20
 
     override fun init() {
-        listBottom = height - 80
+        listBottom = height - 52
         maxVisibleEntries = (listBottom - listTop) / entryHeight
 
-        nameField = TextFieldWidget(textRenderer, width / 2 - 152, height - 68, 200, 20, Text.literal("Profile Name"))
+        nameField = TextFieldWidget(textRenderer, width / 2 - 152, height - 48, 200, 20, Text.literal("Profile Name"))
         nameField.setMaxLength(64)
         nameField.setPlaceholder(Text.literal("Profile name..."))
         addDrawableChild(nameField)
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Save Current")) { onSave() }
-            .dimensions(width / 2 + 52, height - 68, 100, 20)
+            .dimensions(width / 2 + 52, height - 48, 100, 20)
             .build())
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Done")) { close() }
-            .dimensions(width / 2 - 50, height - 40, 100, 20)
+            .dimensions(width / 2 - 50, height - 24, 100, 20)
             .build())
 
         rebuildProfileButtons()
@@ -49,11 +49,11 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         addDrawableChild(nameField)
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Save Current")) { onSave() }
-            .dimensions(width / 2 + 52, height - 68, 100, 20)
+            .dimensions(width / 2 + 52, height - 48, 100, 20)
             .build())
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Done")) { close() }
-            .dimensions(width / 2 - 50, height - 40, 100, 20)
+            .dimensions(width / 2 - 50, height - 24, 100, 20)
             .build())
 
         val profiles = ProfileManager.getProfiles()
@@ -62,7 +62,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         for ((index, profile) in visibleProfiles.withIndex()) {
             val y = listTop + index * entryHeight
 
-            addDrawableChild(ButtonWidget.builder(Text.literal("Load")) { onLoad(profile) }
+            addDrawableChild(ButtonWidget.builder(Text.literal("Edit")) { client?.setScreen(EditProfileScreen(this, profile.name)) }
                 .dimensions(width / 2 + 60, y, 40, 20)
                 .build())
 
@@ -153,6 +153,16 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             )
         }
 
+        // Scrollbar
+        if (profiles.size > maxVisibleEntries) {
+            val listHeight = listBottom - listTop
+            val totalContentHeight = profiles.size * entryHeight
+            val barHeight = (listHeight.toDouble() * listHeight / totalContentHeight).toInt().coerceAtLeast(8)
+            val maxScroll = profiles.size - maxVisibleEntries
+            val barY = listTop + ((listHeight - barHeight) * scrollOffset.toDouble() / maxScroll).toInt()
+            val barX = width / 2 + 128
+            context.fill(barX, barY, barX + 3, barY + barHeight, 0x80FFFFFF.toInt())
+        }
     }
 
     override fun mouseClicked(click: Click, doubled: Boolean): Boolean {
@@ -167,12 +177,14 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             val y = listTop + index * entryHeight
             val iconX = width / 2 - 150
 
-            // Click on profile name → open edit screen
+            // Click on profile name → load profile
+            val isActive = ProfileManager.isActiveProfile(profile)
+            val suffix = if (isActive) " (Active)" else " (${profile.packIds.size} packs)"
+            val label = "${profile.name}$suffix"
             val nameX = iconX + iconSize + 4
-            val label = "${profile.name} (${profile.packIds.size} packs)"
             val nameWidth = textRenderer.getWidth(label)
             if (mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight) {
-                client?.setScreen(EditProfileScreen(this, profile.name))
+                onLoad(profile)
                 return true
             }
         }
