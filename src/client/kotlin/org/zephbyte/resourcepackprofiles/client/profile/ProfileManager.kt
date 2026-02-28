@@ -44,12 +44,23 @@ object ProfileManager {
         val optionsPacks = client.options.resourcePacks.toList()
         logger.info("Saving profile '{}' with {} packs: {}", name, optionsPacks.size, optionsPacks)
 
-        profiles[name] = ResourcePackProfile(name, optionsPacks)
+        val existing = profiles[name]
+        profiles[name] = ResourcePackProfile(name, optionsPacks, existing?.customIcon)
         save()
+        ProfileIconManager.invalidate(name)
     }
 
     fun deleteProfile(name: String) {
-        profiles.remove(name)
+        val profile = profiles.remove(name)
+        if (profile != null) {
+            ProfileIconManager.deleteCustomIcon(profile)
+        }
+        save()
+    }
+
+    fun setCustomIcon(name: String, filename: String?) {
+        val profile = profiles[name] ?: return
+        profiles[name] = profile.copy(customIcon = filename)
         save()
     }
 

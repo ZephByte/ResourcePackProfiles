@@ -1,10 +1,13 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
+import net.minecraft.client.gl.RenderPipelines
+import net.minecraft.client.gui.Click
 import net.minecraft.client.gui.DrawContext
 import net.minecraft.client.gui.screen.Screen
 import net.minecraft.client.gui.widget.ButtonWidget
 import net.minecraft.client.gui.widget.TextFieldWidget
 import net.minecraft.text.Text
+import org.zephbyte.resourcepackprofiles.client.profile.ProfileIconManager
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
 import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
 
@@ -14,10 +17,11 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     private var statusMessage: Text = Text.empty()
     private var statusTicks = 0
     private var scrollOffset = 0
-    private val entryHeight = 24
+    private val entryHeight = 26
     private val listTop = 32
     private var listBottom = 0
     private var maxVisibleEntries = 0
+    private val iconSize = 20
 
     override fun init() {
         listBottom = height - 80
@@ -107,16 +111,24 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         super.render(context, mouseX, mouseY, delta)
 
         // Title
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 16, 0xFFFFFF.toInt() or (0xFF shl 24))
+        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 16, 0xFFFFFF or (0xFF shl 24))
 
-        // Profile list labels
+        // Profile list with icons
         val profiles = ProfileManager.getProfiles()
         val visibleProfiles = profiles.drop(scrollOffset).take(maxVisibleEntries)
 
         for ((index, profile) in visibleProfiles.withIndex()) {
             val y = listTop + index * entryHeight
+            val iconX = width / 2 - 150
+            val iconY = y
+
+            // Draw icon
+            val iconId = ProfileIconManager.getIconId(profile)
+            context.drawTexture(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, iconSize, iconSize, iconSize, iconSize)
+
+            // Draw name label shifted right to make room for icon
             val label = "${profile.name} (${profile.packIds.size} packs)"
-            context.drawText(textRenderer, Text.literal(label), width / 2 - 150, y + 5, 0xFFFFFF.toInt() or (0xFF shl 24), true)
+            context.drawText(textRenderer, Text.literal(label), iconX + iconSize + 4, y + 5, 0xFFFFFF or (0xFF shl 24), true)
         }
 
         if (profiles.isEmpty()) {
@@ -125,14 +137,44 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
                 Text.literal("No profiles saved"),
                 width / 2,
                 listTop + 20,
-                0xAAAAAA.toInt() or (0xFF shl 24)
+                0xAAAAAA or (0xFF shl 24)
             )
         }
 
         // Status message
         if (statusTicks > 0) {
-            context.drawCenteredTextWithShadow(textRenderer, statusMessage, width / 2, height - 52, 0x55FF55.toInt() or (0xFF shl 24))
+            context.drawCenteredTextWithShadow(textRenderer, statusMessage, width / 2, height - 52, 0x55FF55 or (0xFF shl 24))
         }
+    }
+
+    override fun mouseClicked(click: Click, doubled: Boolean): Boolean {
+        val mouseX = click.x()
+        val mouseY = click.y()
+
+        // Check if click is on an icon area
+        val profiles = ProfileManager.getProfiles()
+        val visibleProfiles = profiles.drop(scrollOffset).take(maxVisibleEntries)
+
+        for ((index, profile) in visibleProfiles.withIndex()) {
+            val y = listTop + index * entryHeight
+            val iconX = width / 2 - 150
+
+            if (mouseX >= iconX && mouseX < iconX + iconSize && mouseY >= y && mouseY < y + iconSize) {
+                // Open file picker on a separate thread to avoid blocking the render thread
+                Thread {
+                    val success = ProfileIconManager.openFilePickerAndImport(profile.name)
+                    if (success) {
+                        client?.execute {
+                            rebuildProfileButtons()
+                            setStatus(Text.literal("Icon updated for: ${profile.name}"))
+                        }
+                    }
+                }.start()
+                return true
+            }
+        }
+
+        return super.mouseClicked(click, doubled)
     }
 
     override fun tick() {
@@ -149,6 +191,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     }
 
     override fun close() {
+        ProfileIconManager.cleanup()
         client?.setScreen(parent)
     }
 }
