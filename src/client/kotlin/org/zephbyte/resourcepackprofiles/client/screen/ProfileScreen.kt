@@ -3,6 +3,7 @@ package org.zephbyte.resourcepackprofiles.client.screen
 import net.minecraft.client.gl.RenderPipelines
 import net.minecraft.client.gui.Click
 import net.minecraft.client.gui.DrawContext
+import net.minecraft.client.gui.screen.ConfirmScreen
 import net.minecraft.client.gui.screen.Screen
 import net.minecraft.client.gui.widget.ButtonWidget
 import net.minecraft.client.gui.widget.TextFieldWidget
@@ -14,8 +15,6 @@ import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
 class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource Pack Profiles")) {
 
     private lateinit var nameField: TextFieldWidget
-    private var statusMessage: Text = Text.empty()
-    private var statusTicks = 0
     private var scrollOffset = 0
     private val entryHeight = 26
     private val listTop = 32
@@ -75,36 +74,39 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
 
     private fun onSave() {
         val name = nameField.text.trim()
-        if (name.isEmpty()) {
-            setStatus(Text.literal("Enter a profile name"))
-            return
+        if (name.isEmpty()) return
+
+        if (ProfileManager.hasProfile(name)) {
+            client?.setScreen(ConfirmScreen(
+                { confirmed ->
+                    if (confirmed) {
+                        saveProfile(name)
+                    }
+                    client?.setScreen(this)
+                },
+                Text.literal("Overwrite Profile"),
+                Text.literal("A profile named '$name' already exists. Overwrite it?")
+            ))
+        } else {
+            saveProfile(name)
         }
+    }
+
+    private fun saveProfile(name: String) {
         ProfileManager.saveCurrentAsProfile(name)
         nameField.text = ""
         scrollOffset = 0
         rebuildProfileButtons()
-        setStatus(Text.literal("Saved profile: $name"))
     }
 
     private fun onLoad(profile: ResourcePackProfile) {
-        val missing = ProfileManager.applyProfile(profile)
-        if (missing.isEmpty()) {
-            setStatus(Text.literal("Loaded profile: ${profile.name}"))
-        } else {
-            setStatus(Text.literal("Loaded with ${missing.size} missing pack(s)"))
-        }
+        ProfileManager.applyProfile(profile)
     }
 
     private fun onDelete(name: String) {
         ProfileManager.deleteProfile(name)
         scrollOffset = 0
         rebuildProfileButtons()
-        setStatus(Text.literal("Deleted profile: $name"))
-    }
-
-    private fun setStatus(message: Text) {
-        statusMessage = message
-        statusTicks = 60
     }
 
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
@@ -141,10 +143,6 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             )
         }
 
-        // Status message
-        if (statusTicks > 0) {
-            context.drawCenteredTextWithShadow(textRenderer, statusMessage, width / 2, height - 52, 0x55FF55 or (0xFF shl 24))
-        }
     }
 
     override fun mouseClicked(click: Click, doubled: Boolean): Boolean {
@@ -166,7 +164,6 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
                     if (success) {
                         client?.execute {
                             rebuildProfileButtons()
-                            setStatus(Text.literal("Icon updated for: ${profile.name}"))
                         }
                     }
                 }.start()
@@ -175,11 +172,6 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         }
 
         return super.mouseClicked(click, doubled)
-    }
-
-    override fun tick() {
-        super.tick()
-        if (statusTicks > 0) statusTicks--
     }
 
     override fun mouseScrolled(mouseX: Double, mouseY: Double, horizontalAmount: Double, verticalAmount: Double): Boolean {

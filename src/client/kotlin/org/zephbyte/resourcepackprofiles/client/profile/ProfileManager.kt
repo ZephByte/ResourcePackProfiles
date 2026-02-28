@@ -35,6 +35,8 @@ object ProfileManager {
         Files.writeString(configPath, gson.toJson(profiles.values.toList()))
     }
 
+    fun hasProfile(name: String): Boolean = name in profiles
+
     fun getProfiles(): List<ResourcePackProfile> {
         return profiles.values.sortedBy { it.name.lowercase() }
     }
