@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "resourcepackprofiles",
+  "version": "${version}",
+  "name": "ResourcePackProfiles",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/resourcepackprofiles/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-datagen": [
+      "org.zephbyte.resourcepackprofiles.client.ResourcepackprofilesDataGenerator"
+    ],
+    "client": [
+      "org.zephbyte.resourcepackprofiles.client.ResourcepackprofilesClient"
+    ],
+    "main": [
+      "org.zephbyte.resourcepackprofiles.Resourcepackprofiles"
+    ]
+  },
+  "mixins": [
+    "resourcepackprofiles.mixins.json",
+    {
+      "config": "resourcepackprofiles.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-language-kotlin": ">=${kotlin_loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
