@@ -128,9 +128,13 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             val iconId = ProfileIconManager.getIconId(profile)
             context.drawTexture(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, iconSize, iconSize, iconSize, iconSize)
 
-            // Draw name label shifted right to make room for icon
+            // Draw name label shifted right to make room for icon — highlight on hover
             val label = "${profile.name} (${profile.packIds.size} packs)"
-            context.drawText(textRenderer, Text.literal(label), iconX + iconSize + 4, y + 5, 0xFFFFFF or (0xFF shl 24), true)
+            val nameX = iconX + iconSize + 4
+            val nameWidth = textRenderer.getWidth(label)
+            val isHoveringName = mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight
+            val nameColor = if (isHoveringName) 0xFFFF55 or (0xFF shl 24) else 0xFFFFFF or (0xFF shl 24)
+            context.drawText(textRenderer, Text.literal(label), nameX, y + 5, nameColor, true)
         }
 
         if (profiles.isEmpty()) {
@@ -167,6 +171,15 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
                         }
                     }
                 }.start()
+                return true
+            }
+
+            // Click on profile name → open edit screen
+            val nameX = iconX + iconSize + 4
+            val label = "${profile.name} (${profile.packIds.size} packs)"
+            val nameWidth = textRenderer.getWidth(label)
+            if (mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight) {
+                client?.setScreen(EditProfileScreen(this, profile.name))
                 return true
             }
         }

@@ -60,6 +60,41 @@ object ProfileManager {
         save()
     }
 
+    fun updateProfile(name: String, newPackIds: List<String>) {
+        val profile = profiles[name] ?: return
+        profiles[name] = profile.copy(packIds = newPackIds)
+        save()
+        ProfileIconManager.invalidate(name)
+    }
+
+    fun renameProfile(oldName: String, newName: String): Boolean {
+        if (oldName == newName) return true
+        if (newName in profiles || oldName !in profiles) return false
+
+        val profile = profiles.remove(oldName) ?: return false
+        profiles[newName] = profile.copy(name = newName)
+
+        // Rename custom icon file on disk if it exists
+        if (profile.customIcon != null) {
+            val iconsDir = Path.of("config", "resourcepackprofiles", "icons")
+            val oldPath = iconsDir.resolve(profile.customIcon)
+            if (Files.exists(oldPath)) {
+                val newFileName = "${newName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")}.png"
+                val newPath = iconsDir.resolve(newFileName)
+                try {
+                    Files.move(oldPath, newPath)
+                    profiles[newName] = profiles[newName]!!.copy(customIcon = newFileName)
+                } catch (e: Exception) {
+                    logger.error("Failed to rename custom icon file", e)
+                }
+            }
+        }
+
+        ProfileIconManager.invalidate(oldName)
+        save()
+        return true
+    }
+
     fun setCustomIcon(name: String, filename: String?) {
         val profile = profiles[name] ?: return
         profiles[name] = profile.copy(customIcon = filename)
