@@ -94,14 +94,21 @@ class EditProfileScreen(
             .dimensions(centerX + 4, height - 28, 100, 20).build())
     }
 
+    private var allKnownPackIds = setOf<String>()
+
     private fun recomputeAvailable() {
         val client = client ?: return
+        allKnownPackIds = client.resourcePackManager.profiles.map { it.id }.toSet()
         val currentSet = selectedPacks.toSet()
         availablePacks = client.resourcePackManager.profiles
             .filter { it.getSource().canBeEnabledLater() && !it.isRequired }
             .map { it.id }
             .filter { it !in currentSet }
             .toMutableList()
+    }
+
+    private fun isPackMissing(packId: String): Boolean {
+        return packId !in allKnownPackIds
     }
 
     private fun resolvePackProfile(packId: String): ResourcePackProfile? {
@@ -181,7 +188,10 @@ class EditProfileScreen(
 
         // Column headers
         context.drawCenteredTextWithShadow(textRenderer, Text.literal("Available"), leftX + columnWidth / 2, listTop - 10, 0xAAAAAA or (0xFF shl 24))
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal("Selected"), rightX + columnWidth / 2, listTop - 10, 0xAAAAAA or (0xFF shl 24))
+        val missingCount = selectedPacks.count { isPackMissing(it) }
+        val selectedHeader = if (missingCount > 0) "Selected ($missingCount missing)" else "Selected"
+        val selectedHeaderColor = if (missingCount > 0) 0xFF5555 or (0xFF shl 24) else 0xAAAAAA or (0xFF shl 24)
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal(selectedHeader), rightX + columnWidth / 2, listTop - 10, selectedHeaderColor)
 
         // Draw list backgrounds
         context.fill(leftX, listTop, leftX + columnWidth, listBottom, 0x80000000.toInt())
@@ -264,14 +274,17 @@ class EditProfileScreen(
 
             // Pack name and description
             val packProfile = resolvePackProfile(packId)
+            val missing = isSelectedList && isPackMissing(packId)
             val displayName = packProfile?.displayName?.string ?: packId
             val textX = x + listPadding + packIconSize + 4
             val maxTextWidth = columnWidth - packIconSize - listPadding * 2 - 4
-            context.drawText(textRenderer, Text.literal(truncateText(displayName, maxTextWidth)), textX, entryY + 4, 0xFFFFFF or (0xFF shl 24), true)
+            val nameColor = if (missing) 0xFF5555 or (0xFF shl 24) else 0xFFFFFF or (0xFF shl 24)
+            context.drawText(textRenderer, Text.literal(truncateText(displayName, maxTextWidth)), textX, entryY + 4, nameColor, true)
 
-            val description = packProfile?.description?.string ?: ""
+            val description = if (missing) "Missing — pack not found" else packProfile?.description?.string ?: ""
             if (description.isNotEmpty()) {
-                context.drawText(textRenderer, Text.literal(truncateText(description, maxTextWidth)), textX, entryY + 16, 0x808080 or (0xFF shl 24), false)
+                val descColor = if (missing) 0xFF5555 or (0xFF shl 24) else 0x808080 or (0xFF shl 24)
+                context.drawText(textRenderer, Text.literal(truncateText(description, maxTextWidth)), textX, entryY + 16, descColor, false)
             }
         }
     }

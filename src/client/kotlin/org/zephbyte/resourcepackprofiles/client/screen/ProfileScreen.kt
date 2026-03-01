@@ -106,13 +106,62 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     }
 
     private fun onLoad(profile: ResourcePackProfile) {
-        ProfileManager.applyProfile(profile)
+        client?.setScreen(ConfirmScreen(
+            { confirmed ->
+                if (confirmed) {
+                    val missingIds = ProfileManager.applyProfile(profile)
+                    if (missingIds.isNotEmpty()) {
+                        val missingList = missingIds.joinToString("\n") { "• $it" }
+                        val parentScreen = this
+                        client?.setScreen(object : Screen(Text.literal("Missing Packs")) {
+                            override fun init() {
+                                addDrawableChild(ButtonWidget.builder(Text.literal("OK")) { client?.setScreen(parentScreen) }
+                                    .dimensions(width / 2 - 50, height / 2 + 40, 100, 20)
+                                    .build())
+                            }
+                            override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
+                                super.render(context, mouseX, mouseY, delta)
+                                context.drawCenteredTextWithShadow(textRenderer, title, width / 2, height / 2 - 40, 0xFFFFFF or (0xFF shl 24))
+                                val lines = missingList.split("\n")
+                                for ((i, line) in lines.withIndex()) {
+                                    context.drawCenteredTextWithShadow(textRenderer, Text.literal(line), width / 2, height / 2 - 20 + i * 12, 0xFFAAAAAA.toInt())
+                                }
+                            }
+                        })
+                        return@ConfirmScreen
+                    }
+                }
+                client?.setScreen(this)
+            },
+            Text.literal("Load Profile"),
+            Text.literal("Load profile '${profile.name}'? This will change your active resource packs.")
+        ))
     }
 
     private fun onDelete(name: String) {
-        ProfileManager.deleteProfile(name)
-        scrollOffset = 0
-        rebuildProfileButtons()
+        client?.setScreen(ConfirmScreen(
+            { confirmed ->
+                if (confirmed) {
+                    ProfileManager.deleteProfile(name)
+                    scrollOffset = 0
+                    rebuildProfileButtons()
+                }
+                client?.setScreen(this)
+            },
+            Text.literal("Delete Profile"),
+            Text.literal("Are you sure you want to delete profile '$name'?")
+        ))
+    }
+
+    private fun getProfileLabel(profile: ResourcePackProfile): String {
+        val isActive = ProfileManager.isActiveProfile(profile)
+        val suffix = if (isActive) " (Active)" else " (${profile.packIds.size} packs)"
+        return "${profile.name}$suffix"
+    }
+
+    private fun getMissingPackCount(profile: ResourcePackProfile): Int {
+        val allIds = client!!.resourcePackManager.profiles.map { it.id }.toSet()
+        return profile.packIds.count { it !in allIds }
     }
 
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
@@ -136,8 +185,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
 
             // Draw name label shifted right to make room for icon — highlight on hover
             val isActive = ProfileManager.isActiveProfile(profile)
-            val suffix = if (isActive) " (Active)" else " (${profile.packIds.size} packs)"
-            val label = "${profile.name}$suffix"
+            val label = getProfileLabel(profile)
             val nameX = iconX + iconSize + 4
             val nameWidth = textRenderer.getWidth(label)
             val isHoveringName = mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight
@@ -146,7 +194,12 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
                 isActive -> 0x55FF55 or (0xFF shl 24)
                 else -> 0xFFFFFF or (0xFF shl 24)
             }
-            context.drawText(textRenderer, Text.literal(label), nameX, y + 5, nameColor, true)
+            context.drawText(textRenderer, Text.literal(label), nameX, y + 2, nameColor, true)
+
+            val missingCount = getMissingPackCount(profile)
+            if (missingCount > 0) {
+                context.drawText(textRenderer, Text.literal("$missingCount pack(s) missing"), nameX, y + 14, 0xFF5555 or (0xFF shl 24), false)
+            }
         }
 
         if (profiles.isEmpty()) {
@@ -184,9 +237,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             val iconX = width / 2 - 150
 
             // Click on profile name → load profile
-            val isActive = ProfileManager.isActiveProfile(profile)
-            val suffix = if (isActive) " (Active)" else " (${profile.packIds.size} packs)"
-            val label = "${profile.name}$suffix"
+            val label = getProfileLabel(profile)
             val nameX = iconX + iconSize + 4
             val nameWidth = textRenderer.getWidth(label)
             if (mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight) {
