@@ -62,18 +62,20 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         for ((index, profile) in visibleProfiles.withIndex()) {
             val y = listTop + index * entryHeight
 
+            val buttonY = y + 1
+
             val starLabel = if (profile.favorite) "\u2605" else "\u2606"
             addDrawableChild(ButtonWidget.builder(Text.literal(starLabel)) {
                 ProfileManager.toggleFavorite(profile.name)
                 rebuildProfileButtons()
-            }.dimensions(width / 2 + 38, y, 20, 20).build())
+            }.dimensions(width / 2 + 38, buttonY, 20, 20).build())
 
             addDrawableChild(ButtonWidget.builder(Text.literal("Edit")) { client?.setScreen(EditProfileScreen(this, profile.name)) }
-                .dimensions(width / 2 + 60, y, 40, 20)
+                .dimensions(width / 2 + 60, buttonY, 40, 20)
                 .build())
 
             addDrawableChild(ButtonWidget.builder(Text.literal("\uD83D\uDDD1")) { onDelete(profile.name) }
-                .dimensions(width / 2 + 104, y, 20, 20)
+                .dimensions(width / 2 + 104, buttonY, 20, 20)
                 .build())
         }
     }
@@ -106,6 +108,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     }
 
     private fun onLoad(profile: ResourcePackProfile) {
+        if (ProfileManager.isActiveProfile(profile)) return
         client?.setScreen(ConfirmScreen(
             { confirmed ->
                 if (confirmed) {
@@ -154,9 +157,25 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     }
 
     private fun getProfileLabel(profile: ResourcePackProfile): String {
-        val isActive = ProfileManager.isActiveProfile(profile)
-        val suffix = if (isActive) " (Active)" else " (${profile.packIds.size} packs)"
-        return "${profile.name}$suffix"
+        return profile.name
+    }
+
+    private fun getProfileSubLabel(profile: ResourcePackProfile): String {
+        val missingCount = getMissingPackCount(profile)
+        return if (missingCount > 0) {
+            "${profile.packIds.size} packs | $missingCount missing"
+        } else {
+            "${profile.packIds.size} packs"
+        }
+    }
+
+    private fun truncateText(text: String, maxWidth: Int): String {
+        if (textRenderer.getWidth(text) <= maxWidth) return text
+        var s = text
+        while (textRenderer.getWidth("$s...") > maxWidth && s.isNotEmpty()) {
+            s = s.dropLast(1)
+        }
+        return "$s..."
     }
 
     private fun getMissingPackCount(profile: ResourcePackProfile): Int {
@@ -177,29 +196,40 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         for ((index, profile) in visibleProfiles.withIndex()) {
             val y = listTop + index * entryHeight
             val iconX = width / 2 - 150
-            val iconY = y
+            val iconY = y + 1
+
+            // Active profile outline
+            val isActive = ProfileManager.isActiveProfile(profile)
+            if (isActive) {
+                val outlineColor = 0xAAAAAA or (0xFF shl 24)
+                val left = iconX - 2
+                val top = y - 2
+                val right = width / 2 + 126
+                val bottom = y + entryHeight - 2
+                context.fill(left, top, right, top + 1, outlineColor)         // top
+                context.fill(left, bottom, right, bottom + 1, outlineColor)   // bottom
+                context.fill(left, top, left + 1, bottom + 1, outlineColor)   // left
+                context.fill(right - 1, top, right, bottom + 1, outlineColor) // right
+            }
 
             // Draw icon
             val iconId = ProfileIconManager.getIconId(profile)
             context.drawTexture(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, iconSize, iconSize, iconSize, iconSize)
 
             // Draw name label shifted right to make room for icon — highlight on hover
-            val isActive = ProfileManager.isActiveProfile(profile)
-            val label = getProfileLabel(profile)
             val nameX = iconX + iconSize + 4
+            val maxTextWidth = width / 2 + 34 - nameX
+            val label = truncateText(getProfileLabel(profile), maxTextWidth)
             val nameWidth = textRenderer.getWidth(label)
             val isHoveringName = mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight
-            val nameColor = when {
-                isHoveringName -> 0xFFFF55 or (0xFF shl 24)
-                isActive -> 0x55FF55 or (0xFF shl 24)
-                else -> 0xFFFFFF or (0xFF shl 24)
-            }
+            val nameColor = if (isHoveringName) 0xFFFF55 or (0xFF shl 24) else 0xFFFFFF or (0xFF shl 24)
             context.drawText(textRenderer, Text.literal(label), nameX, y + 2, nameColor, true)
 
+            // Pack count
             val missingCount = getMissingPackCount(profile)
-            if (missingCount > 0) {
-                context.drawText(textRenderer, Text.literal("$missingCount pack(s) missing"), nameX, y + 14, 0xFF5555 or (0xFF shl 24), false)
-            }
+            val subLabel = truncateText(getProfileSubLabel(profile), maxTextWidth)
+            val subColor = if (missingCount > 0) 0xFF5555 or (0xFF shl 24) else 0xAAAAAA or (0xFF shl 24)
+            context.drawText(textRenderer, Text.literal(subLabel), nameX, y + 14, subColor, false)
         }
 
         if (profiles.isEmpty()) {
@@ -237,8 +267,9 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             val iconX = width / 2 - 150
 
             // Click on profile name → load profile
-            val label = getProfileLabel(profile)
             val nameX = iconX + iconSize + 4
+            val maxTextWidth = width / 2 + 34 - nameX
+            val label = truncateText(getProfileLabel(profile), maxTextWidth)
             val nameWidth = textRenderer.getWidth(label)
             if (mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight) {
                 onLoad(profile)

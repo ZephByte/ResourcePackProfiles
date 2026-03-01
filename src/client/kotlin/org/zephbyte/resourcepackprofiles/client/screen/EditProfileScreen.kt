@@ -60,7 +60,7 @@ class EditProfileScreen(
             close()
             return
         }
-        selectedPacks = profile.packIds.toMutableList()
+        selectedPacks = profile.packIds.reversed().toMutableList()
         recomputeAvailable()
 
         val centerX = width / 2
@@ -158,11 +158,12 @@ class EditProfileScreen(
         val newName = nameField.text.trim()
         if (newName.isEmpty()) return
 
+        val packsToSave = selectedPacks.reversed()
         if (newName != originalName) {
             if (!ProfileManager.renameProfile(originalName, newName)) return
-            ProfileManager.updateProfile(newName, selectedPacks)
+            ProfileManager.updateProfile(newName, packsToSave)
         } else {
-            ProfileManager.updateProfile(originalName, selectedPacks)
+            ProfileManager.updateProfile(originalName, packsToSave)
         }
 
         close()

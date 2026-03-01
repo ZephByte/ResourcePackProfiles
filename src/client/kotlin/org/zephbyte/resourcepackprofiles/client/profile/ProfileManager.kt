@@ -2,11 +2,15 @@ package org.zephbyte.resourcepackprofiles.client.profile
 
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
-import com.google.gson.reflect.TypeToken
 import net.minecraft.client.MinecraftClient
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
+
+private data class ConfigData(
+    val profiles: List<ResourcePackProfile> = emptyList(),
+    val lastActiveProfile: String? = null
+)
 
 object ProfileManager {
     private val logger = LoggerFactory.getLogger("ResourcePackProfiles")
@@ -20,9 +24,9 @@ object ProfileManager {
         if (Files.exists(configPath)) {
             try {
                 val json = Files.readString(configPath)
-                val type = object : TypeToken<List<ResourcePackProfile>>() {}.type
-                val loaded: List<ResourcePackProfile> = gson.fromJson(json, type) ?: emptyList()
-                loaded.forEach { profiles[it.name] = it }
+                val config: ConfigData = gson.fromJson(json, ConfigData::class.java)
+                config.profiles.forEach { profiles[it.name] = it }
+                lastActiveProfileName = config.lastActiveProfile
                 logger.info("Loaded {} profile(s) from config", profiles.size)
             } catch (e: Exception) {
                 logger.error("Failed to load profiles config", e)
@@ -33,7 +37,8 @@ object ProfileManager {
 
     private fun save() {
         Files.createDirectories(configPath.parent)
-        Files.writeString(configPath, gson.toJson(profiles.values.toList()))
+        val config = ConfigData(profiles.values.toList(), lastActiveProfileName)
+        Files.writeString(configPath, gson.toJson(config))
     }
 
     fun hasProfile(name: String): Boolean = name in profiles
@@ -50,11 +55,11 @@ object ProfileManager {
 
     fun saveCurrentAsProfile(name: String) {
         val client = MinecraftClient.getInstance()
-        val optionsPacks = client.options.resourcePacks.toList()
-        logger.info("Saving profile '{}' with {} packs: {}", name, optionsPacks.size, optionsPacks)
+        val userPacks = getUserPacks(client.options.resourcePacks.toList())
+        logger.info("Saving profile '{}' with {} user packs: {}", name, userPacks.size, userPacks)
 
         val existing = profiles[name]
-        profiles[name] = ResourcePackProfile(name, optionsPacks, existing?.customIcon)
+        profiles[name] = ResourcePackProfile(name, userPacks, existing?.customIcon, existing?.favorite ?: false)
         lastActiveProfileName = name
         save()
         ProfileIconManager.invalidate(name)
@@ -111,14 +116,22 @@ object ProfileManager {
         save()
     }
 
-    fun isActiveProfile(profile: ResourcePackProfile): Boolean {
+    private fun getUserPacks(packIds: List<String>): List<String> {
         val client = MinecraftClient.getInstance()
-        val currentPacks = client.options.resourcePacks.toList()
-        if (profile.packIds != currentPacks) return false
-        // If we know which profile was last applied/saved, only mark that one
-        if (lastActiveProfileName != null) return profile.name == lastActiveProfileName
-        // Fallback: first matching profile wins (no save/load yet this session)
-        return ProfileManager.getProfiles().first { it.packIds == currentPacks }.name == profile.name
+        val requiredIds = client.resourcePackManager.profiles
+            .filter { it.isRequired || !it.getSource().canBeEnabledLater() }
+            .map { it.id }
+            .toSet()
+        return packIds.filter { it !in requiredIds }
+    }
+
+    fun isActiveProfile(profile: ResourcePackProfile): Boolean {
+        if (lastActiveProfileName != profile.name) return false
+        val client = MinecraftClient.getInstance()
+        val currentUserPacks = getUserPacks(client.options.resourcePacks.toList())
+        val availableIds = client.resourcePackManager.profiles.map { it.id }.toSet()
+        val profileValidPacks = getUserPacks(profile.packIds).filter { it in availableIds }
+        return profileValidPacks == currentUserPacks
     }
 
     fun applyProfile(profile: ResourcePackProfile): List<String> {
@@ -132,23 +145,28 @@ object ProfileManager {
             logger.warn("Missing packs: {}", missingIds)
         }
 
-        val validPacks = profile.packIds.filter { it in availableIds }
-        logger.info("Valid packs to apply: {}", validPacks)
+        val validUserPacks = profile.packIds.filter { it in availableIds }
+
+        // Preserve built-in/required packs that are always present
+        val builtinPacks = client.options.resourcePacks.filter { it !in getUserPacks(client.options.resourcePacks.toList()) }
+        val fullPackList = builtinPacks + validUserPacks
+        logger.info("Valid user packs: {}, built-in packs preserved: {}", validUserPacks, builtinPacks)
 
         logger.info("options.resourcePacks BEFORE: {}", client.options.resourcePacks.toList())
         client.options.resourcePacks.clear()
-        client.options.resourcePacks.addAll(validPacks)
+        client.options.resourcePacks.addAll(fullPackList)
         logger.info("options.resourcePacks AFTER: {}", client.options.resourcePacks.toList())
 
         client.options.write()
         client.resourcePackManager.scanPacks()
-        client.resourcePackManager.setEnabledProfiles(validPacks)
+        client.resourcePackManager.setEnabledProfiles(fullPackList)
 
         val enabledAfter = client.resourcePackManager.enabledProfiles.map { it.id }
         logger.info("resourcePackManager.enabledProfiles AFTER setEnabledProfiles: {}", enabledAfter)
 
         client.reloadResources()
         lastActiveProfileName = profile.name
+        save()
 
         return missingIds
     }
