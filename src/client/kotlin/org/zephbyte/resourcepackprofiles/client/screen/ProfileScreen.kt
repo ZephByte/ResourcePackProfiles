@@ -25,27 +25,27 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     private val listTop = 32
     private var listBottom = 0
     private var maxVisibleEntries = 0
-    private val iconSize = 20
+    private val iconSize = 21
 
     override fun init() {
-        listBottom = height - 52
+        listBottom = height - 56
         maxVisibleEntries = (listBottom - listTop) / entryHeight
 
-        nameField = TextFieldWidget(textRenderer, width / 2 - 152, height - 48, 200, 20, Text.literal("Profile Name"))
+        nameField = TextFieldWidget(textRenderer, width / 2 - 152, height - 52, 200, 20, Text.literal("Profile Name"))
         nameField.setMaxLength(64)
         nameField.setPlaceholder(Text.literal("Profile name..."))
         addDrawableChild(nameField)
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Save Current")) { onSave() }
-            .dimensions(width / 2 + 52, height - 48, 100, 20)
+            .dimensions(width / 2 + 52, height - 52, 100, 20)
             .build())
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Done")) { close() }
-            .dimensions(width / 2 - 50, height - 24, 100, 20)
+            .dimensions(width / 2 - 50, height - 28, 100, 20)
             .build())
 
         addDrawableChild(ButtonWidget.builder(Text.literal(" ")) { onImport() }
-            .dimensions(width - 24, height - 24, 20, 20)
+            .dimensions(width - 24, height - 28, 20, 20)
             .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(Text.literal("Import Profile")))
             .build())
 
@@ -59,15 +59,15 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         addDrawableChild(nameField)
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Save Current")) { onSave() }
-            .dimensions(width / 2 + 52, height - 48, 100, 20)
+            .dimensions(width / 2 + 52, height - 52, 100, 20)
             .build())
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Done")) { close() }
-            .dimensions(width / 2 - 50, height - 24, 100, 20)
+            .dimensions(width / 2 - 50, height - 28, 100, 20)
             .build())
 
         addDrawableChild(ButtonWidget.builder(Text.literal(" ")) { onImport() }
-            .dimensions(width - 24, height - 24, 20, 20)
+            .dimensions(width - 24, height - 28, 20, 20)
             .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(Text.literal("Import Profile")))
             .build())
 
@@ -83,14 +83,14 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             addDrawableChild(ButtonWidget.builder(Text.literal(starLabel)) {
                 ProfileManager.toggleFavorite(profile.name)
                 rebuildProfileButtons()
-            }.dimensions(width / 2 + 38, buttonY, 20, 20).build())
+            }.dimensions(width / 2 + 62, buttonY, 20, 20).build())
 
-            addDrawableChild(ButtonWidget.builder(Text.literal("Edit")) { client?.setScreen(EditProfileScreen(this, profile.name)) }
-                .dimensions(width / 2 + 60, buttonY, 40, 20)
+            addDrawableChild(ButtonWidget.builder(Text.literal("\u270E")) { client?.setScreen(EditProfileScreen(this, profile.name)) }
+                .dimensions(width / 2 + 84, buttonY, 20, 20)
                 .build())
 
-            addDrawableChild(ButtonWidget.builder(Text.literal("\uD83D\uDDD1")) { onDelete(profile.name) }
-                .dimensions(width / 2 + 104, buttonY, 20, 20)
+            addDrawableChild(ButtonWidget.builder(Text.literal("\u2715")) { onDelete(profile.name) }
+                .dimensions(width / 2 + 106, buttonY, 20, 20)
                 .build())
         }
     }
@@ -244,23 +244,23 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     private fun drawImportIcon(context: DrawContext, bx: Int, by: Int) {
         val white = 0xFFFFFFFF.toInt()
         // Box: open-top rectangle (bottom + left + right sides)
-        context.fill(bx + 4, by + 14, bx + 16, by + 15, white)  // bottom
-        context.fill(bx + 4, by + 9, bx + 5, by + 15, white)    // left
-        context.fill(bx + 15, by + 9, bx + 16, by + 15, white)  // right
-        // Arrow shaft: vertical line going down into box
-        context.fill(bx + 9, by + 4, bx + 11, by + 12, white)
+        context.fill(bx + 4, by + 15, bx + 16, by + 16, white)  // bottom
+        context.fill(bx + 4, by + 10, bx + 5, by + 16, white)   // left
+        context.fill(bx + 15, by + 10, bx + 16, by + 16, white) // right
+        // Arrow shaft: extends past chevron to form sharp point
+        context.fill(bx + 9, by + 5, bx + 11, by + 14, white)
         // Arrow head: chevron pointing down
-        context.fill(bx + 7, by + 10, bx + 9, by + 11, white)   // left wing
-        context.fill(bx + 11, by + 10, bx + 13, by + 11, white) // right wing
-        context.fill(bx + 8, by + 11, bx + 9, by + 12, white)   // left tip
-        context.fill(bx + 11, by + 11, bx + 12, by + 12, white) // right tip
+        context.fill(bx + 7, by + 11, bx + 9, by + 12, white)   // left wing
+        context.fill(bx + 11, by + 11, bx + 13, by + 12, white) // right wing
+        context.fill(bx + 8, by + 12, bx + 9, by + 13, white)   // left tip
+        context.fill(bx + 11, by + 12, bx + 12, by + 13, white) // right tip
     }
 
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
         super.render(context, mouseX, mouseY, delta)
 
         // Draw import icon on the import button
-        drawImportIcon(context, width - 24, height - 24)
+        drawImportIcon(context, width - 24, height - 28)
 
         // Title
         context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 16, 0xFFFFFF or (0xFF shl 24))
@@ -280,7 +280,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
                 val outlineColor = 0xAAAAAA or (0xFF shl 24)
                 val left = iconX - 2
                 val top = y - 2
-                val right = width / 2 + 126
+                val right = width / 2 + 130
                 val bottom = y + entryHeight - 2
                 context.fill(left, top, right, top + 1, outlineColor)         // top
                 context.fill(left, bottom, right, bottom + 1, outlineColor)   // bottom
@@ -294,7 +294,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
 
             // Draw name label shifted right to make room for icon — highlight on hover
             val nameX = iconX + iconSize + 4
-            val maxTextWidth = width / 2 + 34 - nameX
+            val maxTextWidth = width / 2 + 52 - nameX
             val label = truncateText(getProfileLabel(profile), maxTextWidth)
             val nameWidth = textRenderer.getWidth(label)
             val isHoveringName = mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight
@@ -306,6 +306,14 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             val subLabel = truncateText(getProfileSubLabel(profile), maxTextWidth)
             val subColor = if (missingCount > 0) 0xFF5555 or (0xFF shl 24) else 0xAAAAAA or (0xFF shl 24)
             context.drawText(textRenderer, Text.literal(subLabel), nameX, y + 14, subColor, false)
+
+            // Red tint on trash button when hovered
+            val buttonY = y + 1
+            val trashX = width / 2 + 106
+            val trashHovered = mouseX >= trashX && mouseX < trashX + 20 && mouseY >= buttonY && mouseY < buttonY + 20
+            if (trashHovered) {
+                context.fill(trashX, buttonY, trashX + 20, buttonY + 20, 0x60FF0000)
+            }
         }
 
         if (profiles.isEmpty()) {
@@ -325,7 +333,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             val barHeight = (listHeight.toDouble() * listHeight / totalContentHeight).toInt().coerceAtLeast(8)
             val maxScroll = profiles.size - maxVisibleEntries
             val barY = listTop + ((listHeight - barHeight) * scrollOffset.toDouble() / maxScroll).toInt()
-            val barX = width / 2 + 128
+            val barX = width / 2 + 132
             context.fill(barX, barY, barX + 3, barY + barHeight, 0x80FFFFFF.toInt())
         }
     }
@@ -344,7 +352,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
 
             // Click on profile name → load profile
             val nameX = iconX + iconSize + 4
-            val maxTextWidth = width / 2 + 34 - nameX
+            val maxTextWidth = width / 2 + 52 - nameX
             val label = truncateText(getProfileLabel(profile), maxTextWidth)
             val nameWidth = textRenderer.getWidth(label)
             if (mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight) {
