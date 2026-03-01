@@ -8,6 +8,7 @@ import org.lwjgl.util.tinyfd.TinyFileDialogs
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Base64
 
 object ProfileIconManager {
     private val logger = LoggerFactory.getLogger("ResourcePackProfiles")
@@ -202,6 +203,34 @@ object ProfileIconManager {
             }
         }
         invalidate(profile.name)
+    }
+
+    fun encodeIconToBase64(profileName: String): String? {
+        val profile = ProfileManager.getProfiles().find { it.name == profileName } ?: return null
+        if (profile.customIcon == null) return null
+        val iconPath = iconsDir.resolve(profile.customIcon)
+        if (!Files.exists(iconPath)) return null
+        return try {
+            val bytes = Files.readAllBytes(iconPath)
+            Base64.getEncoder().encodeToString(bytes)
+        } catch (e: Exception) {
+            logger.error("Failed to encode icon to base64 for '$profileName'", e)
+            null
+        }
+    }
+
+    fun importIconFromBase64(profileName: String, base64: String) {
+        Files.createDirectories(iconsDir)
+        val fileName = "${profileName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")}.png"
+        val destPath = iconsDir.resolve(fileName)
+        try {
+            val bytes = Base64.getDecoder().decode(base64)
+            Files.write(destPath, bytes)
+            ProfileManager.setCustomIcon(profileName, fileName)
+            MinecraftClient.getInstance().execute { invalidate(profileName) }
+        } catch (e: Exception) {
+            logger.error("Failed to import icon from base64 for '$profileName'", e)
+        }
     }
 
     private fun Array<String>.toFilterBuffer(): org.lwjgl.PointerBuffer {

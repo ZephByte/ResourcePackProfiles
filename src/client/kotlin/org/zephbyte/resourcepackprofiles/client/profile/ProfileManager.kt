@@ -3,6 +3,9 @@ package org.zephbyte.resourcepackprofiles.client.profile
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import net.minecraft.client.MinecraftClient
+import org.lwjgl.BufferUtils
+import org.lwjgl.system.MemoryUtil
+import org.lwjgl.util.tinyfd.TinyFileDialogs
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
@@ -10,6 +13,13 @@ import java.nio.file.Path
 private data class ConfigData(
     val profiles: List<ResourcePackProfile> = emptyList(),
     val lastActiveProfile: String? = null
+)
+
+private data class ExportData(
+    val name: String,
+    val packIds: List<String>,
+    val favorite: Boolean = false,
+    val customIcon: String? = null
 )
 
 object ProfileManager {
@@ -132,6 +142,103 @@ object ProfileManager {
         val availableIds = client.resourcePackManager.profiles.map { it.id }.toSet()
         val profileValidPacks = getUserPacks(profile.packIds).filter { it in availableIds }
         return profileValidPacks == currentUserPacks
+    }
+
+    fun exportProfile(profile: ResourcePackProfile): Boolean {
+        val filterPatterns = arrayOf("*.rpprofile")
+        val filterBuf = BufferUtils.createPointerBuffer(filterPatterns.size)
+        for (pattern in filterPatterns) {
+            filterBuf.put(MemoryUtil.memUTF8(pattern))
+        }
+        filterBuf.flip()
+
+        val defaultName = "${profile.name}.rpprofile"
+        val path = TinyFileDialogs.tinyfd_saveFileDialog(
+            "Export Profile",
+            defaultName,
+            filterBuf,
+            "Resource Pack Profile (*.rpprofile)"
+        ) ?: return false
+
+        return try {
+            val iconBase64 = ProfileIconManager.encodeIconToBase64(profile.name)
+            val exportData = ExportData(
+                name = profile.name,
+                packIds = profile.packIds,
+                favorite = profile.favorite,
+                customIcon = iconBase64
+            )
+            Files.writeString(Path.of(path), gson.toJson(exportData))
+            logger.info("Exported profile '{}' to {}", profile.name, path)
+            true
+        } catch (e: Exception) {
+            logger.error("Failed to export profile '{}'", profile.name, e)
+            false
+        }
+    }
+
+    /**
+     * Opens a file dialog to import a profile. Returns the imported profile name,
+     * or null if cancelled/failed. If overwriteConfirmed is false and a profile
+     * with the same name exists, returns the conflicting name prefixed with "!".
+     */
+    fun importProfile(overwriteName: String? = null): String? {
+        val filterPatterns = arrayOf("*.rpprofile")
+        val filterBuf = BufferUtils.createPointerBuffer(filterPatterns.size)
+        for (pattern in filterPatterns) {
+            filterBuf.put(MemoryUtil.memUTF8(pattern))
+        }
+        filterBuf.flip()
+
+        val path = TinyFileDialogs.tinyfd_openFileDialog(
+            "Import Profile",
+            null,
+            filterBuf,
+            "Resource Pack Profile (*.rpprofile)",
+            false
+        ) ?: return null
+
+        return importProfileFromPath(Path.of(path), overwriteName)
+    }
+
+    fun importProfileFromPath(filePath: Path, overwriteName: String? = null): String? {
+        return try {
+            val json = Files.readString(filePath)
+            val data: ExportData = gson.fromJson(json, ExportData::class.java)
+            val name = overwriteName ?: data.name
+
+            // Check for existing profile if not an overwrite
+            if (overwriteName == null && hasProfile(name)) {
+                return "!$name"
+            }
+
+            // If overwriting, delete old icon first
+            if (overwriteName != null) {
+                val existing = profiles[name]
+                if (existing != null) {
+                    ProfileIconManager.deleteCustomIcon(existing)
+                }
+            }
+
+            profiles[name] = ResourcePackProfile(
+                name = name,
+                packIds = data.packIds,
+                favorite = data.favorite
+            )
+
+            // Import custom icon if present
+            if (data.customIcon != null) {
+                ProfileIconManager.importIconFromBase64(name, data.customIcon)
+            }
+
+            save()
+            ProfileIconManager.invalidate(name)
+            logger.info("Imported profile '{}' with {} packs", name, data.packIds.size)
+            name
+        } catch (e: Exception) {
+            logger.error("Failed to import profile", e)
+            null
+        }
     }
 
     fun applyProfile(profile: ResourcePackProfile): List<String> {

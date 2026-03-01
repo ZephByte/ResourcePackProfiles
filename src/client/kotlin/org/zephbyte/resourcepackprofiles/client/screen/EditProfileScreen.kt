@@ -92,6 +92,12 @@ class EditProfileScreen(
             .dimensions(centerX - 104, height - 28, 100, 20).build())
         addDrawableChild(ButtonWidget.builder(Text.literal("Cancel")) { close() }
             .dimensions(centerX + 4, height - 28, 100, 20).build())
+
+        // Export button — bottom right corner (blank label, icon drawn in render)
+        addDrawableChild(ButtonWidget.builder(Text.literal(" ")) { onExport() }
+            .dimensions(width - 24, height - 28, 20, 20)
+            .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(Text.literal("Export Profile")))
+            .build())
     }
 
     private var allKnownPackIds = setOf<String>()
@@ -154,6 +160,13 @@ class EditProfileScreen(
         return id
     }
 
+    private fun onExport() {
+        val profile = ProfileManager.getProfiles().find { it.name == originalName } ?: return
+        Thread {
+            ProfileManager.exportProfile(profile)
+        }.start()
+    }
+
     private fun onSave() {
         val newName = nameField.text.trim()
         if (newName.isEmpty()) return
@@ -169,10 +182,28 @@ class EditProfileScreen(
         close()
     }
 
+    private fun drawExportIcon(context: DrawContext, bx: Int, by: Int) {
+        val white = 0xFFFFFFFF.toInt()
+        // Box: open-top rectangle (bottom + left + right sides)
+        context.fill(bx + 4, by + 14, bx + 16, by + 15, white)  // bottom
+        context.fill(bx + 4, by + 9, bx + 5, by + 15, white)    // left
+        context.fill(bx + 15, by + 9, bx + 16, by + 15, white)  // right
+        // Arrow shaft: vertical line going up from box
+        context.fill(bx + 9, by + 4, bx + 11, by + 12, white)
+        // Arrow head: chevron
+        context.fill(bx + 7, by + 6, bx + 9, by + 7, white)     // left wing
+        context.fill(bx + 11, by + 6, bx + 13, by + 7, white)   // right wing
+        context.fill(bx + 8, by + 5, bx + 9, by + 6, white)     // left tip
+        context.fill(bx + 11, by + 5, bx + 12, by + 6, white)   // right tip
+    }
+
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
         super.render(context, mouseX, mouseY, delta)
 
         val centerX = width / 2
+
+        // Draw export icon on the export button
+        drawExportIcon(context, width - 24, height - 28)
 
         // Draw current profile icon next to the name field
         val profile = ProfileManager.getProfiles().find { it.name == originalName }

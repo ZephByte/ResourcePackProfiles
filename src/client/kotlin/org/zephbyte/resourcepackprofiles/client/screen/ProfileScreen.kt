@@ -1,5 +1,6 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
+import net.minecraft.client.MinecraftClient
 import net.minecraft.client.gl.RenderPipelines
 import net.minecraft.client.gui.Click
 import net.minecraft.client.gui.DrawContext
@@ -8,9 +9,13 @@ import net.minecraft.client.gui.screen.Screen
 import net.minecraft.client.gui.widget.ButtonWidget
 import net.minecraft.client.gui.widget.TextFieldWidget
 import net.minecraft.text.Text
+import org.lwjgl.BufferUtils
+import org.lwjgl.system.MemoryUtil
+import org.lwjgl.util.tinyfd.TinyFileDialogs
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileIconManager
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
 import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
+import java.nio.file.Path
 
 class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource Pack Profiles")) {
 
@@ -39,6 +44,11 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             .dimensions(width / 2 - 50, height - 24, 100, 20)
             .build())
 
+        addDrawableChild(ButtonWidget.builder(Text.literal(" ")) { onImport() }
+            .dimensions(width - 24, height - 24, 20, 20)
+            .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(Text.literal("Import Profile")))
+            .build())
+
         rebuildProfileButtons()
     }
 
@@ -54,6 +64,11 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Done")) { close() }
             .dimensions(width / 2 - 50, height - 24, 100, 20)
+            .build())
+
+        addDrawableChild(ButtonWidget.builder(Text.literal(" ")) { onImport() }
+            .dimensions(width - 24, height - 24, 20, 20)
+            .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(Text.literal("Import Profile")))
             .build())
 
         val profiles = ProfileManager.getProfiles()
@@ -156,6 +171,49 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         ))
     }
 
+    private fun onImport() {
+        Thread {
+            val filterPatterns = arrayOf("*.rpprofile")
+            val filterBuf = BufferUtils.createPointerBuffer(filterPatterns.size)
+            for (pattern in filterPatterns) {
+                filterBuf.put(MemoryUtil.memUTF8(pattern))
+            }
+            filterBuf.flip()
+
+            val pathStr = TinyFileDialogs.tinyfd_openFileDialog(
+                "Import Profile",
+                null,
+                filterBuf,
+                "Resource Pack Profile (*.rpprofile)",
+                false
+            ) ?: return@Thread
+
+            val filePath = Path.of(pathStr)
+            MinecraftClient.getInstance().execute {
+                val result = ProfileManager.importProfileFromPath(filePath)
+                if (result == null) return@execute
+                if (result.startsWith("!")) {
+                    val name = result.substring(1)
+                    client?.setScreen(ConfirmScreen(
+                        { confirmed ->
+                            if (confirmed) {
+                                ProfileManager.importProfileFromPath(filePath, name)
+                                scrollOffset = 0
+                                rebuildProfileButtons()
+                            }
+                            client?.setScreen(this)
+                        },
+                        Text.literal("Overwrite Profile"),
+                        Text.literal("A profile named '$name' already exists. Overwrite it?")
+                    ))
+                } else {
+                    scrollOffset = 0
+                    rebuildProfileButtons()
+                }
+            }
+        }.start()
+    }
+
     private fun getProfileLabel(profile: ResourcePackProfile): String {
         return profile.name
     }
@@ -183,8 +241,26 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         return profile.packIds.count { it !in allIds }
     }
 
+    private fun drawImportIcon(context: DrawContext, bx: Int, by: Int) {
+        val white = 0xFFFFFFFF.toInt()
+        // Box: open-top rectangle (bottom + left + right sides)
+        context.fill(bx + 4, by + 14, bx + 16, by + 15, white)  // bottom
+        context.fill(bx + 4, by + 9, bx + 5, by + 15, white)    // left
+        context.fill(bx + 15, by + 9, bx + 16, by + 15, white)  // right
+        // Arrow shaft: vertical line going down into box
+        context.fill(bx + 9, by + 4, bx + 11, by + 12, white)
+        // Arrow head: chevron pointing down
+        context.fill(bx + 7, by + 10, bx + 9, by + 11, white)   // left wing
+        context.fill(bx + 11, by + 10, bx + 13, by + 11, white) // right wing
+        context.fill(bx + 8, by + 11, bx + 9, by + 12, white)   // left tip
+        context.fill(bx + 11, by + 11, bx + 12, by + 12, white) // right tip
+    }
+
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
         super.render(context, mouseX, mouseY, delta)
+
+        // Draw import icon on the import button
+        drawImportIcon(context, width - 24, height - 24)
 
         // Title
         context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 16, 0xFFFFFF or (0xFF shl 24))
