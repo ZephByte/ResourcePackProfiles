@@ -49,7 +49,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.literal("Res
             .build())
 
         addRenderableWidget(Button.builder(Component.literal(" ")) { onImport() }
-            .bounds(width - 24, height - 28, 20, 20)
+            .bounds(width / 2 + 54, height - 28, 20, 20)
             .tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal("Import Profile")))
             .build())
 
@@ -71,7 +71,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.literal("Res
             .build())
 
         addRenderableWidget(Button.builder(Component.literal(" ")) { onImport() }
-            .bounds(width - 24, height - 28, 20, 20)
+            .bounds(width / 2 + 54, height - 28, 20, 20)
             .tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal("Import Profile")))
             .build())
 
@@ -265,7 +265,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.literal("Res
         super.extractRenderState(context, mouseX, mouseY, delta)
 
         // Draw import icon on the import button
-        drawImportIcon(context, width - 24, height - 28)
+        drawImportIcon(context, width / 2 + 54, height - 28)
 
         // Title
         context.centeredText(font, title, width / 2, 16, 0xFFFFFF or (0xFF shl 24))

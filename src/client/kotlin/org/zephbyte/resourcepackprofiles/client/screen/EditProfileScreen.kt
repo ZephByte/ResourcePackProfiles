@@ -92,9 +92,9 @@ class EditProfileScreen(
         addRenderableWidget(Button.builder(Component.literal("Cancel")) { onClose() }
             .bounds(centerX + 4, height - 28, 100, 20).build())
 
-        // Export button — bottom right corner (blank label, icon drawn in render)
+        // Export button — trails the Done/Cancel row (blank label, icon drawn in render)
         addRenderableWidget(Button.builder(Component.literal(" ")) { onExport() }
-            .bounds(width - 24, height - 28, 20, 20)
+            .bounds(centerX + 108, height - 28, 20, 20)
             .tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal("Export Profile")))
             .build())
     }
@@ -202,7 +202,7 @@ class EditProfileScreen(
         val centerX = width / 2
 
         // Draw export icon on the export button
-        drawExportIcon(context, width - 24, height - 28)
+        drawExportIcon(context, centerX + 108, height - 28)
 
         // Draw current profile icon next to the name field
         val profile = ProfileManager.getProfiles().find { it.name == originalName }
