@@ -4,7 +4,8 @@
   "package": "org.zephbyte.resourcepackprofiles.mixin.client",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "PackScreenMixin"
+    "PackScreenMixin",
+    "PackSelectionModelAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

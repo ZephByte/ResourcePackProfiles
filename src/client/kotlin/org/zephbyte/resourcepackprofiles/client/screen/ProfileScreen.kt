@@ -12,6 +12,7 @@ import net.minecraft.network.chat.Component
 import org.lwjgl.BufferUtils
 import org.lwjgl.system.MemoryUtil
 import org.lwjgl.util.tinyfd.TinyFileDialogs
+import org.zephbyte.resourcepackprofiles.client.RefreshablePackScreen
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileIconManager
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
 import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
@@ -21,6 +22,9 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.literal("Res
 
     private lateinit var nameField: EditBox
     private var scrollOffset = 0
+    // Tracks whether a profile was applied this session, so onClose can return to a refreshed
+    // pack selection screen instead of a stale one that would overwrite the applied packs.
+    private var profileApplied = false
     private val entryHeight = 26
     private val listTop = 32
     private var listBottom = 0
@@ -128,6 +132,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.literal("Res
             { confirmed ->
                 if (confirmed) {
                     val missingIds = ProfileManager.applyProfile(profile)
+                    profileApplied = true
                     if (missingIds.isNotEmpty()) {
                         val missingList = missingIds.joinToString("\n") { "• $it" }
                         val parentScreen = this
@@ -374,6 +379,14 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.literal("Res
 
     override fun onClose() {
         ProfileIconManager.cleanup()
-        minecraft?.setScreen(parent)
+        val returnTo = parent
+        // If we came from the vanilla pack selection screen and applied a profile, its model holds
+        // a stale snapshot that would wipe the applied packs on close. Return to a refreshed
+        // instance whose model reflects the packs we just applied instead.
+        if (profileApplied && returnTo is RefreshablePackScreen) {
+            minecraft?.setScreen(returnTo.rpp_createRefreshedScreen())
+        } else {
+            minecraft?.setScreen(returnTo)
+        }
     }
 }
