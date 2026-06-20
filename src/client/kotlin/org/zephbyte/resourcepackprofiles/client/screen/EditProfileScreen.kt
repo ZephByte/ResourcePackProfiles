@@ -47,6 +47,10 @@ class EditProfileScreen(
     private var pendingIconPath: Path? = null
     private var pendingIconRemove = false
 
+    // Whether this profile was the active one when editing began; if so, Done re-applies it so
+    // the edits stay live instead of silently deactivating the profile.
+    private var wasActive = false
+
     // Layout constants — mirror the vanilla pack screen: two 200px-wide lists with an 8px gap
     // centred on the screen.
     private val entryHeight = 36
@@ -79,6 +83,7 @@ class EditProfileScreen(
             return
         }
         selectedPacks = profile.packIds.reversed().toMutableList()
+        wasActive = ProfileManager.isActiveProfile(profile)
         recomputeAvailable()
 
         val centerX = width / 2
@@ -204,6 +209,17 @@ class EditProfileScreen(
         }
 
         applyStagedIcon(finalName)
+
+        // If this profile was active, re-apply it so the edits stay live instead of the profile
+        // silently deactivating because its packs no longer match what's loaded.
+        if (wasActive) {
+            val updated = ProfileManager.getProfiles().find { it.name == finalName }
+            if (updated != null && !ProfileManager.isActiveProfile(updated)) {
+                ProfileManager.applyProfile(updated)
+                parent.markProfileApplied()
+            }
+        }
+
         onClose()
     }
 

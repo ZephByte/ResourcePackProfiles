@@ -88,6 +88,14 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
         profileList.refresh()
     }
 
+    /**
+     * Marks that packs were applied (e.g. by the edit screen re-applying an active profile), so
+     * [onClose] returns to a refreshed pack screen rather than a stale snapshot.
+     */
+    fun markProfileApplied() {
+        profileApplied = true
+    }
+
     private fun onLoad(profile: ResourcePackProfile) {
         if (ProfileManager.isActiveProfile(profile)) return
         minecraft.setScreen(ConfirmScreen(
