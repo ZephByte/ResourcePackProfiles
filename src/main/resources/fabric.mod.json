@@ -2,11 +2,17 @@
   "schemaVersion": 1,
   "id": "resourcepackprofiles",
   "version": "${version}",
-  "name": "ResourcePackProfiles",
-  "description": "",
-  "authors": [],
-  "contact": {},
-  "license": "All-Rights-Reserved",
+  "name": "Resource Pack Profiles",
+  "description": "Save, manage, and share named resource pack load-order profiles. Switch between completely different pack setups in seconds, right from the resource pack screen.",
+  "authors": [
+    "ZephByte"
+  ],
+  "contact": {
+    "homepage": "https://github.com/ZephByte/ResourcePackProfiles",
+    "sources": "https://github.com/ZephByte/ResourcePackProfiles",
+    "issues": "https://github.com/ZephByte/ResourcePackProfiles/issues"
+  },
+  "license": "MIT",
   "icon": "assets/resourcepackprofiles/icon.png",
   "environment": "client",
   "entrypoints": {

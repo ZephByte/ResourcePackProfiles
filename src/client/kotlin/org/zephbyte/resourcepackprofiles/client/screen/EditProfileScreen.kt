@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.NativeImage
 import net.minecraft.ChatFormatting
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.RenderPipelines
+import net.minecraft.client.input.KeyEvent
 import net.minecraft.client.input.MouseButtonEvent
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.components.ObjectSelectionList
@@ -162,6 +163,28 @@ class EditProfileScreen(
         if (pendingIconRemove) previewTextures.invalidate(PREVIEW_KEY)
     }
 
+    /** Adds a pack to the top of the selected set (top = highest priority, matching vanilla). */
+    private fun addPack(packId: String) {
+        selectedPacks.add(0, packId)
+        rebuildLists()
+    }
+
+    private fun removePackAt(index: Int) {
+        if (index !in selectedPacks.indices) return
+        selectedPacks.removeAt(index)
+        rebuildLists()
+    }
+
+    /** Moves the selected pack at [index] by [delta] rows, in place (preserves scroll). */
+    private fun moveSelected(index: Int, delta: Int): Boolean {
+        val target = index + delta
+        if (index !in selectedPacks.indices || target !in selectedPacks.indices) return false
+        selectedPacks[index] = selectedPacks.set(target, selectedPacks[index])
+        selectedList.swapEntries(index, target)
+        if (pendingIconRemove) previewTextures.invalidate(PREVIEW_KEY)
+        return true
+    }
+
     private fun isPackMissing(packId: String): Boolean = packId !in allKnownPackIds
 
     private fun resolvePackProfile(packId: String): Pack? =
@@ -303,6 +326,13 @@ class EditProfileScreen(
         // Place the scrollbar at the list's right edge, like vanilla's TransferableSelectionList
         override fun scrollBarX(): Int = x + width - scrollbarWidth()
 
+        // Give the focused entry first crack at the key, then fall back to up/down navigation.
+        override fun keyPressed(event: KeyEvent): Boolean {
+            val sel = selected
+            if (sel != null && sel.keyPressed(event)) return true
+            return super.keyPressed(event)
+        }
+
         fun rebuild(packIds: List<String>) = replaceEntries(packIds.map { PackEntry(it, isSelectedList) })
 
         /** Swap two entries in place (preserves scroll, unlike a full rebuild). */
@@ -325,11 +355,9 @@ class EditProfileScreen(
             val iconY = iconY()
 
             if (!isSelectedList) {
-                // Available column: click the icon to add to the top of the selected set
-                // (top = highest priority, matching vanilla)
+                // Available column: click the icon to add to the selected set
                 if (mx >= iconX && mx < iconX + packIconSize && my >= iconY && my < iconY + packIconSize) {
-                    selectedPacks.add(0, packId)
-                    rebuildLists()
+                    addPack(packId)
                     return true
                 }
                 return false
@@ -340,24 +368,35 @@ class EditProfileScreen(
             if (index < 0) return false
             when (getHoveredArrowRegion(mx, my, iconX, iconY)) {
                 ArrowRegion.UNSELECT -> {
-                    selectedPacks.removeAt(index)
-                    rebuildLists()
+                    removePackAt(index)
                     return true
                 }
-                ArrowRegion.MOVE_UP -> if (index > 0) {
-                    selectedPacks[index] = selectedPacks.set(index - 1, selectedPacks[index])
-                    selectedList.swapEntries(index, index - 1)
-                    if (pendingIconRemove) previewTextures.invalidate(PREVIEW_KEY)
-                    return true
-                }
-                ArrowRegion.MOVE_DOWN -> if (index < selectedPacks.size - 1) {
-                    selectedPacks[index] = selectedPacks.set(index + 1, selectedPacks[index])
-                    selectedList.swapEntries(index, index + 1)
-                    if (pendingIconRemove) previewTextures.invalidate(PREVIEW_KEY)
-                    return true
-                }
+                ArrowRegion.MOVE_UP -> return moveSelected(index, -1)
+                ArrowRegion.MOVE_DOWN -> return moveSelected(index, 1)
                 ArrowRegion.NONE -> {}
             }
+            return false
+        }
+
+        override fun keyPressed(event: KeyEvent): Boolean {
+            val confirm = event.isConfirmation || event.isSelection
+            if (!isSelectedList) {
+                if (confirm) {
+                    addPack(packId)
+                    return true
+                }
+                return false
+            }
+
+            val index = selectedPacks.indexOf(packId)
+            if (index < 0) return false
+            if (confirm) {
+                removePackAt(index)
+                return true
+            }
+            // Shift+Up/Down reorders the focused pack (plain Up/Down navigates the list)
+            if (event.hasShiftDown() && event.isUp) return moveSelected(index, -1)
+            if (event.hasShiftDown() && event.isDown) return moveSelected(index, 1)
             return false
         }
 
