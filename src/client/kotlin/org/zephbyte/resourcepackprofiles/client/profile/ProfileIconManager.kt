@@ -1,9 +1,9 @@
 package org.zephbyte.resourcepackprofiles.client.profile
 
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.texture.NativeImage
-import net.minecraft.client.texture.NativeImageBackedTexture
-import net.minecraft.util.Identifier
+import net.minecraft.client.Minecraft
+import com.mojang.blaze3d.platform.NativeImage
+import net.minecraft.client.renderer.texture.DynamicTexture
+import net.minecraft.resources.Identifier
 import org.lwjgl.util.tinyfd.TinyFileDialogs
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
@@ -27,7 +27,7 @@ object ProfileIconManager {
             return id
         }
 
-        return Identifier.ofVanilla("textures/misc/unknown_pack.png")
+        return Identifier.withDefaultNamespace("textures/misc/unknown_pack.png")
     }
 
     private fun loadIcon(profile: ResourcePackProfile): NativeImage? {
@@ -49,17 +49,17 @@ object ProfileIconManager {
     }
 
     private fun generateCompositeIcon(profile: ResourcePackProfile): NativeImage? {
-        val client = MinecraftClient.getInstance()
-        val packManager = client.resourcePackManager
+        val client = Minecraft.getInstance()
+        val packManager = client.resourcePackRepository
 
         val packIcons = mutableListOf<NativeImage>()
         try {
             for (packId in profile.packIds) {
                 if (!packId.startsWith("file/")) continue
-                val packProfile = packManager.profiles.find { it.id == packId } ?: continue
+                val packProfile = packManager.availablePacks.find { it.id == packId } ?: continue
                 try {
-                    val pack = packProfile.createResourcePack() ?: continue
-                    val iconSupplier = pack.openRoot("pack.png") ?: continue
+                    val pack = packProfile.open() ?: continue
+                    val iconSupplier = pack.getRootResource("pack.png") ?: continue
                     val icon = iconSupplier.get().use { NativeImage.read(it) }
                     packIcons.add(icon)
                     if (packIcons.size >= 4) break
@@ -77,7 +77,7 @@ object ProfileIconManager {
         // Fill with transparent
         for (x in 0 until ICON_SIZE) {
             for (y in 0 until ICON_SIZE) {
-                composite.setColorArgb(x, y, 0)
+                composite.setPixel(x, y, 0)
             }
         }
 
@@ -114,7 +114,7 @@ object ProfileIconManager {
             for (y in 0 until destH) {
                 val srcXi = (x * srcW / destW).coerceIn(0, srcW - 1)
                 val srcYi = (y * srcH / destH).coerceIn(0, srcH - 1)
-                dest.setColorArgb(destX + x, destY + y, src.getColorArgb(srcXi, srcYi))
+                dest.setPixel(destX + x, destY + y, src.getPixel(srcXi, srcYi))
             }
         }
     }
@@ -128,32 +128,32 @@ object ProfileIconManager {
     }
 
     private fun registerTexture(profileName: String, image: NativeImage): Identifier {
-        val client = MinecraftClient.getInstance()
+        val client = Minecraft.getInstance()
         val sanitized = profileName.lowercase().replace(Regex("[^a-z0-9_.-]"), "_")
-        val id = Identifier.of("resourcepackprofiles", "profile_icon/$sanitized")
+        val id = Identifier.fromNamespaceAndPath("resourcepackprofiles", "profile_icon/$sanitized")
 
         // Destroy old texture if it exists
         if (id in registeredTextures) {
-            client.textureManager.destroyTexture(id)
+            client.textureManager.release(id)
         }
 
-        val texture = NativeImageBackedTexture({ "resourcepackprofiles/profile_icon/$sanitized" }, image)
-        client.textureManager.registerTexture(id, texture)
+        val texture = DynamicTexture({ "resourcepackprofiles/profile_icon/$sanitized" }, image)
+        client.textureManager.register(id, texture)
         registeredTextures.add(id)
         return id
     }
 
     fun invalidate(profileName: String) {
         val id = cache.remove(profileName) ?: return
-        val client = MinecraftClient.getInstance()
-        client.textureManager.destroyTexture(id)
+        val client = Minecraft.getInstance()
+        client.textureManager.release(id)
         registeredTextures.remove(id)
     }
 
     fun cleanup() {
-        val client = MinecraftClient.getInstance()
+        val client = Minecraft.getInstance()
         for (id in registeredTextures) {
-            client.textureManager.destroyTexture(id)
+            client.textureManager.release(id)
         }
         registeredTextures.clear()
         cache.clear()
@@ -167,12 +167,12 @@ object ProfileIconManager {
         // Read, resize to 64x64, save as PNG
         val image = Files.newInputStream(sourcePath).use { NativeImage.read(it) }
         val resized = resizeImage(image, ICON_SIZE, ICON_SIZE)
-        resized.writeTo(destPath)
+        resized.writeToFile(destPath)
         resized.close()
 
         ProfileManager.setCustomIcon(profileName, fileName)
         // Defer texture invalidation to the render thread
-        MinecraftClient.getInstance().execute { invalidate(profileName) }
+        Minecraft.getInstance().execute { invalidate(profileName) }
     }
 
     fun openFilePickerAndImport(profileName: String): Boolean {
@@ -227,7 +227,7 @@ object ProfileIconManager {
             val bytes = Base64.getDecoder().decode(base64)
             Files.write(destPath, bytes)
             ProfileManager.setCustomIcon(profileName, fileName)
-            MinecraftClient.getInstance().execute { invalidate(profileName) }
+            Minecraft.getInstance().execute { invalidate(profileName) }
         } catch (e: Exception) {
             logger.error("Failed to import icon from base64 for '$profileName'", e)
         }

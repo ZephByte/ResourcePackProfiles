@@ -2,7 +2,7 @@ package org.zephbyte.resourcepackprofiles.client.profile
 
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
-import net.minecraft.client.MinecraftClient
+import net.minecraft.client.Minecraft
 import org.lwjgl.BufferUtils
 import org.lwjgl.system.MemoryUtil
 import org.lwjgl.util.tinyfd.TinyFileDialogs
@@ -64,7 +64,7 @@ object ProfileManager {
     }
 
     fun saveCurrentAsProfile(name: String) {
-        val client = MinecraftClient.getInstance()
+        val client = Minecraft.getInstance()
         val userPacks = getUserPacks(client.options.resourcePacks.toList())
         logger.info("Saving profile '{}' with {} user packs: {}", name, userPacks.size, userPacks)
 
@@ -127,9 +127,9 @@ object ProfileManager {
     }
 
     private fun getUserPacks(packIds: List<String>): List<String> {
-        val client = MinecraftClient.getInstance()
-        val requiredIds = client.resourcePackManager.profiles
-            .filter { it.isRequired || !it.getSource().canBeEnabledLater() }
+        val client = Minecraft.getInstance()
+        val requiredIds = client.resourcePackRepository.availablePacks
+            .filter { it.isRequired || !it.packSource.shouldAddAutomatically() }
             .map { it.id }
             .toSet()
         return packIds.filter { it !in requiredIds }
@@ -137,9 +137,9 @@ object ProfileManager {
 
     fun isActiveProfile(profile: ResourcePackProfile): Boolean {
         if (lastActiveProfileName != profile.name) return false
-        val client = MinecraftClient.getInstance()
+        val client = Minecraft.getInstance()
         val currentUserPacks = getUserPacks(client.options.resourcePacks.toList())
-        val availableIds = client.resourcePackManager.profiles.map { it.id }.toSet()
+        val availableIds = client.resourcePackRepository.availablePacks.map { it.id }.toSet()
         val profileValidPacks = getUserPacks(profile.packIds).filter { it in availableIds }
         return profileValidPacks == currentUserPacks
     }
@@ -242,8 +242,8 @@ object ProfileManager {
     }
 
     fun applyProfile(profile: ResourcePackProfile): List<String> {
-        val client = MinecraftClient.getInstance()
-        val availableIds = client.resourcePackManager.profiles.map { it.id }.toSet()
+        val client = Minecraft.getInstance()
+        val availableIds = client.resourcePackRepository.availablePacks.map { it.id }.toSet()
         logger.info("Available pack IDs: {}", availableIds)
         logger.info("Profile '{}' wants pack IDs: {}", profile.name, profile.packIds)
 
@@ -264,14 +264,14 @@ object ProfileManager {
         client.options.resourcePacks.addAll(fullPackList)
         logger.info("options.resourcePacks AFTER: {}", client.options.resourcePacks.toList())
 
-        client.options.write()
-        client.resourcePackManager.scanPacks()
-        client.resourcePackManager.setEnabledProfiles(fullPackList)
+        client.options.save()
+        client.resourcePackRepository.reload()
+        client.resourcePackRepository.setSelected(fullPackList)
 
-        val enabledAfter = client.resourcePackManager.enabledProfiles.map { it.id }
-        logger.info("resourcePackManager.enabledProfiles AFTER setEnabledProfiles: {}", enabledAfter)
+        val enabledAfter = client.resourcePackRepository.selectedPacks.map { it.id }
+        logger.info("resourcePackRepository.selectedPacks AFTER setSelected: {}", enabledAfter)
 
-        client.reloadResources()
+        client.reloadResourcePacks()
         lastActiveProfileName = profile.name
         save()
 

@@ -1,14 +1,14 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.gl.RenderPipelines
-import net.minecraft.client.gui.Click
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.client.gui.screen.ConfirmScreen
-import net.minecraft.client.gui.screen.Screen
-import net.minecraft.client.gui.widget.ButtonWidget
-import net.minecraft.client.gui.widget.TextFieldWidget
-import net.minecraft.text.Text
+import net.minecraft.client.Minecraft
+import net.minecraft.client.renderer.RenderPipelines
+import net.minecraft.client.input.MouseButtonEvent
+import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.client.gui.screens.ConfirmScreen
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.client.gui.components.Button
+import net.minecraft.client.gui.components.EditBox
+import net.minecraft.network.chat.Component
 import org.lwjgl.BufferUtils
 import org.lwjgl.system.MemoryUtil
 import org.lwjgl.util.tinyfd.TinyFileDialogs
@@ -17,9 +17,9 @@ import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
 import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
 import java.nio.file.Path
 
-class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource Pack Profiles")) {
+class ProfileScreen(private val parent: Screen?) : Screen(Component.literal("Resource Pack Profiles")) {
 
-    private lateinit var nameField: TextFieldWidget
+    private lateinit var nameField: EditBox
     private var scrollOffset = 0
     private val entryHeight = 26
     private val listTop = 32
@@ -31,22 +31,22 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         listBottom = height - 56
         maxVisibleEntries = (listBottom - listTop) / entryHeight
 
-        nameField = TextFieldWidget(textRenderer, width / 2 - 152, height - 52, 200, 20, Text.literal("Profile Name"))
+        nameField = EditBox(font, width / 2 - 152, height - 52, 200, 20, Component.literal("Profile Name"))
         nameField.setMaxLength(64)
-        nameField.setPlaceholder(Text.literal("Profile name..."))
-        addDrawableChild(nameField)
+        nameField.setHint(Component.literal("Profile name..."))
+        addRenderableWidget(nameField)
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("Save Current")) { onSave() }
-            .dimensions(width / 2 + 52, height - 52, 100, 20)
+        addRenderableWidget(Button.builder(Component.literal("Save Current")) { onSave() }
+            .bounds(width / 2 + 52, height - 52, 100, 20)
             .build())
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("Done")) { close() }
-            .dimensions(width / 2 - 50, height - 28, 100, 20)
+        addRenderableWidget(Button.builder(Component.literal("Done")) { onClose() }
+            .bounds(width / 2 - 50, height - 28, 100, 20)
             .build())
 
-        addDrawableChild(ButtonWidget.builder(Text.literal(" ")) { onImport() }
-            .dimensions(width - 24, height - 28, 20, 20)
-            .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(Text.literal("Import Profile")))
+        addRenderableWidget(Button.builder(Component.literal(" ")) { onImport() }
+            .bounds(width - 24, height - 28, 20, 20)
+            .tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal("Import Profile")))
             .build())
 
         rebuildProfileButtons()
@@ -54,21 +54,21 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
 
     private fun rebuildProfileButtons() {
         // Remove old profile buttons by clearing and re-adding fixed widgets
-        clearChildren()
+        clearWidgets()
 
-        addDrawableChild(nameField)
+        addRenderableWidget(nameField)
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("Save Current")) { onSave() }
-            .dimensions(width / 2 + 52, height - 52, 100, 20)
+        addRenderableWidget(Button.builder(Component.literal("Save Current")) { onSave() }
+            .bounds(width / 2 + 52, height - 52, 100, 20)
             .build())
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("Done")) { close() }
-            .dimensions(width / 2 - 50, height - 28, 100, 20)
+        addRenderableWidget(Button.builder(Component.literal("Done")) { onClose() }
+            .bounds(width / 2 - 50, height - 28, 100, 20)
             .build())
 
-        addDrawableChild(ButtonWidget.builder(Text.literal(" ")) { onImport() }
-            .dimensions(width - 24, height - 28, 20, 20)
-            .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(Text.literal("Import Profile")))
+        addRenderableWidget(Button.builder(Component.literal(" ")) { onImport() }
+            .bounds(width - 24, height - 28, 20, 20)
+            .tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal("Import Profile")))
             .build())
 
         val profiles = ProfileManager.getProfiles()
@@ -79,36 +79,36 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
 
             val buttonY = y + 1
 
-            val starLabel = if (profile.favorite) "\u2605" else "\u2606"
-            addDrawableChild(ButtonWidget.builder(Text.literal(starLabel)) {
+            val starLabel = if (profile.favorite) "★" else "☆"
+            addRenderableWidget(Button.builder(Component.literal(starLabel)) {
                 ProfileManager.toggleFavorite(profile.name)
                 rebuildProfileButtons()
-            }.dimensions(width / 2 + 62, buttonY, 20, 20).build())
+            }.bounds(width / 2 + 62, buttonY, 20, 20).build())
 
-            addDrawableChild(ButtonWidget.builder(Text.literal("\u270E")) { client?.setScreen(EditProfileScreen(this, profile.name)) }
-                .dimensions(width / 2 + 84, buttonY, 20, 20)
+            addRenderableWidget(Button.builder(Component.literal("✎")) { minecraft?.setScreen(EditProfileScreen(this, profile.name)) }
+                .bounds(width / 2 + 84, buttonY, 20, 20)
                 .build())
 
-            addDrawableChild(ButtonWidget.builder(Text.literal("\u2715")) { onDelete(profile.name) }
-                .dimensions(width / 2 + 106, buttonY, 20, 20)
+            addRenderableWidget(Button.builder(Component.literal("✕")) { onDelete(profile.name) }
+                .bounds(width / 2 + 106, buttonY, 20, 20)
                 .build())
         }
     }
 
     private fun onSave() {
-        val name = nameField.text.trim()
+        val name = nameField.value.trim()
         if (name.isEmpty()) return
 
         if (ProfileManager.hasProfile(name)) {
-            client?.setScreen(ConfirmScreen(
+            minecraft?.setScreen(ConfirmScreen(
                 { confirmed ->
                     if (confirmed) {
                         saveProfile(name)
                     }
-                    client?.setScreen(this)
+                    minecraft?.setScreen(this)
                 },
-                Text.literal("Overwrite Profile"),
-                Text.literal("A profile named '$name' already exists. Overwrite it?")
+                Component.literal("Overwrite Profile"),
+                Component.literal("A profile named '$name' already exists. Overwrite it?")
             ))
         } else {
             saveProfile(name)
@@ -117,57 +117,57 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
 
     private fun saveProfile(name: String) {
         ProfileManager.saveCurrentAsProfile(name)
-        nameField.text = ""
+        nameField.value = ""
         scrollOffset = 0
         rebuildProfileButtons()
     }
 
     private fun onLoad(profile: ResourcePackProfile) {
         if (ProfileManager.isActiveProfile(profile)) return
-        client?.setScreen(ConfirmScreen(
+        minecraft?.setScreen(ConfirmScreen(
             { confirmed ->
                 if (confirmed) {
                     val missingIds = ProfileManager.applyProfile(profile)
                     if (missingIds.isNotEmpty()) {
                         val missingList = missingIds.joinToString("\n") { "• $it" }
                         val parentScreen = this
-                        client?.setScreen(object : Screen(Text.literal("Missing Packs")) {
+                        minecraft?.setScreen(object : Screen(Component.literal("Missing Packs")) {
                             override fun init() {
-                                addDrawableChild(ButtonWidget.builder(Text.literal("OK")) { client?.setScreen(parentScreen) }
-                                    .dimensions(width / 2 - 50, height / 2 + 40, 100, 20)
+                                addRenderableWidget(Button.builder(Component.literal("OK")) { minecraft?.setScreen(parentScreen) }
+                                    .bounds(width / 2 - 50, height / 2 + 40, 100, 20)
                                     .build())
                             }
-                            override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
-                                super.render(context, mouseX, mouseY, delta)
-                                context.drawCenteredTextWithShadow(textRenderer, title, width / 2, height / 2 - 40, 0xFFFFFF or (0xFF shl 24))
+                            override fun extractRenderState(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
+                                super.extractRenderState(context, mouseX, mouseY, delta)
+                                context.centeredText(font, title, width / 2, height / 2 - 40, 0xFFFFFF or (0xFF shl 24))
                                 val lines = missingList.split("\n")
                                 for ((i, line) in lines.withIndex()) {
-                                    context.drawCenteredTextWithShadow(textRenderer, Text.literal(line), width / 2, height / 2 - 20 + i * 12, 0xFFAAAAAA.toInt())
+                                    context.centeredText(font, Component.literal(line), width / 2, height / 2 - 20 + i * 12, 0xFFAAAAAA.toInt())
                                 }
                             }
                         })
                         return@ConfirmScreen
                     }
                 }
-                client?.setScreen(this)
+                minecraft?.setScreen(this)
             },
-            Text.literal("Load Profile"),
-            Text.literal("Load profile '${profile.name}'? This will change your active resource packs.")
+            Component.literal("Load Profile"),
+            Component.literal("Load profile '${profile.name}'? This will change your active resource packs.")
         ))
     }
 
     private fun onDelete(name: String) {
-        client?.setScreen(ConfirmScreen(
+        minecraft?.setScreen(ConfirmScreen(
             { confirmed ->
                 if (confirmed) {
                     ProfileManager.deleteProfile(name)
                     scrollOffset = 0
                     rebuildProfileButtons()
                 }
-                client?.setScreen(this)
+                minecraft?.setScreen(this)
             },
-            Text.literal("Delete Profile"),
-            Text.literal("Are you sure you want to delete profile '$name'?")
+            Component.literal("Delete Profile"),
+            Component.literal("Are you sure you want to delete profile '$name'?")
         ))
     }
 
@@ -189,22 +189,22 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             ) ?: return@Thread
 
             val filePath = Path.of(pathStr)
-            MinecraftClient.getInstance().execute {
+            Minecraft.getInstance().execute {
                 val result = ProfileManager.importProfileFromPath(filePath)
                 if (result == null) return@execute
                 if (result.startsWith("!")) {
                     val name = result.substring(1)
-                    client?.setScreen(ConfirmScreen(
+                    minecraft?.setScreen(ConfirmScreen(
                         { confirmed ->
                             if (confirmed) {
                                 ProfileManager.importProfileFromPath(filePath, name)
                                 scrollOffset = 0
                                 rebuildProfileButtons()
                             }
-                            client?.setScreen(this)
+                            minecraft?.setScreen(this)
                         },
-                        Text.literal("Overwrite Profile"),
-                        Text.literal("A profile named '$name' already exists. Overwrite it?")
+                        Component.literal("Overwrite Profile"),
+                        Component.literal("A profile named '$name' already exists. Overwrite it?")
                     ))
                 } else {
                     scrollOffset = 0
@@ -228,20 +228,20 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
     }
 
     private fun truncateText(text: String, maxWidth: Int): String {
-        if (textRenderer.getWidth(text) <= maxWidth) return text
+        if (font.width(text) <= maxWidth) return text
         var s = text
-        while (textRenderer.getWidth("$s...") > maxWidth && s.isNotEmpty()) {
+        while (font.width("$s...") > maxWidth && s.isNotEmpty()) {
             s = s.dropLast(1)
         }
         return "$s..."
     }
 
     private fun getMissingPackCount(profile: ResourcePackProfile): Int {
-        val allIds = client!!.resourcePackManager.profiles.map { it.id }.toSet()
+        val allIds = minecraft!!.resourcePackRepository.availablePacks.map { it.id }.toSet()
         return profile.packIds.count { it !in allIds }
     }
 
-    private fun drawImportIcon(context: DrawContext, bx: Int, by: Int) {
+    private fun drawImportIcon(context: GuiGraphicsExtractor, bx: Int, by: Int) {
         val white = 0xFFFFFFFF.toInt()
         // Box: open-top rectangle (bottom + left + right sides)
         context.fill(bx + 4, by + 15, bx + 16, by + 16, white)  // bottom
@@ -256,14 +256,14 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         context.fill(bx + 11, by + 12, bx + 12, by + 13, white) // right tip
     }
 
-    override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
-        super.render(context, mouseX, mouseY, delta)
+    override fun extractRenderState(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
+        super.extractRenderState(context, mouseX, mouseY, delta)
 
         // Draw import icon on the import button
         drawImportIcon(context, width - 24, height - 28)
 
         // Title
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 16, 0xFFFFFF or (0xFF shl 24))
+        context.centeredText(font, title, width / 2, 16, 0xFFFFFF or (0xFF shl 24))
 
         // Profile list with icons
         val profiles = ProfileManager.getProfiles()
@@ -290,22 +290,22 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
 
             // Draw icon
             val iconId = ProfileIconManager.getIconId(profile)
-            context.drawTexture(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, iconSize, iconSize, iconSize, iconSize)
+            context.blit(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, iconSize, iconSize, iconSize, iconSize)
 
             // Draw name label shifted right to make room for icon — highlight on hover
             val nameX = iconX + iconSize + 4
             val maxTextWidth = width / 2 + 52 - nameX
             val label = truncateText(getProfileLabel(profile), maxTextWidth)
-            val nameWidth = textRenderer.getWidth(label)
+            val nameWidth = font.width(label)
             val isHoveringName = mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight
             val nameColor = if (isHoveringName) 0xFFFF55 or (0xFF shl 24) else 0xFFFFFF or (0xFF shl 24)
-            context.drawText(textRenderer, Text.literal(label), nameX, y + 2, nameColor, true)
+            context.text(font, Component.literal(label), nameX, y + 2, nameColor, true)
 
             // Pack count
             val missingCount = getMissingPackCount(profile)
             val subLabel = truncateText(getProfileSubLabel(profile), maxTextWidth)
             val subColor = if (missingCount > 0) 0xFF5555 or (0xFF shl 24) else 0xAAAAAA or (0xFF shl 24)
-            context.drawText(textRenderer, Text.literal(subLabel), nameX, y + 14, subColor, false)
+            context.text(font, Component.literal(subLabel), nameX, y + 14, subColor, false)
 
             // Red tint on trash button when hovered
             val buttonY = y + 1
@@ -317,9 +317,9 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         }
 
         if (profiles.isEmpty()) {
-            context.drawCenteredTextWithShadow(
-                textRenderer,
-                Text.literal("No profiles saved"),
+            context.centeredText(
+                font,
+                Component.literal("No profiles saved"),
                 width / 2,
                 listTop + 20,
                 0xAAAAAA or (0xFF shl 24)
@@ -338,7 +338,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         }
     }
 
-    override fun mouseClicked(click: Click, doubled: Boolean): Boolean {
+    override fun mouseClicked(click: MouseButtonEvent, doubled: Boolean): Boolean {
         val mouseX = click.x()
         val mouseY = click.y()
 
@@ -354,7 +354,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
             val nameX = iconX + iconSize + 4
             val maxTextWidth = width / 2 + 52 - nameX
             val label = truncateText(getProfileLabel(profile), maxTextWidth)
-            val nameWidth = textRenderer.getWidth(label)
+            val nameWidth = font.width(label)
             if (mouseX >= nameX && mouseX < nameX + nameWidth && mouseY >= y && mouseY < y + entryHeight) {
                 onLoad(profile)
                 return true
@@ -372,8 +372,8 @@ class ProfileScreen(private val parent: Screen?) : Screen(Text.literal("Resource
         return true
     }
 
-    override fun close() {
+    override fun onClose() {
         ProfileIconManager.cleanup()
-        client?.setScreen(parent)
+        minecraft?.setScreen(parent)
     }
 }

@@ -1,26 +1,25 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
-import net.minecraft.client.gl.RenderPipelines
-import net.minecraft.client.gui.Click
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.client.gui.screen.Screen
-import net.minecraft.client.gui.widget.ButtonWidget
-import net.minecraft.client.gui.widget.TextFieldWidget
-import net.minecraft.client.texture.NativeImage
-import net.minecraft.client.texture.NativeImageBackedTexture
-import net.minecraft.resource.ResourcePackProfile
-import net.minecraft.resource.ResourcePackSource
-import net.minecraft.text.Text
-import net.minecraft.util.Identifier
+import net.minecraft.client.renderer.RenderPipelines
+import net.minecraft.client.input.MouseButtonEvent
+import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.client.gui.components.Button
+import net.minecraft.client.gui.components.EditBox
+import com.mojang.blaze3d.platform.NativeImage
+import net.minecraft.client.renderer.texture.DynamicTexture
+import net.minecraft.server.packs.repository.Pack
+import net.minecraft.network.chat.Component
+import net.minecraft.resources.Identifier
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileIconManager
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
 
 class EditProfileScreen(
     private val parent: ProfileScreen,
     private val originalName: String
-) : Screen(Text.literal("Edit Profile")) {
+) : Screen(Component.literal("Edit Profile")) {
 
-    private lateinit var nameField: TextFieldWidget
+    private lateinit var nameField: EditBox
 
     // Editing state — pack IDs
     private var selectedPacks = mutableListOf<String>()
@@ -39,14 +38,14 @@ class EditProfileScreen(
     private val scrollSpeed = 12.0
 
     // Vanilla arrow sprite IDs
-    private val SELECT_HIGHLIGHTED = Identifier.ofVanilla("transferable_list/select_highlighted")
-    private val SELECT = Identifier.ofVanilla("transferable_list/select")
-    private val UNSELECT_HIGHLIGHTED = Identifier.ofVanilla("transferable_list/unselect_highlighted")
-    private val UNSELECT = Identifier.ofVanilla("transferable_list/unselect")
-    private val MOVE_UP_HIGHLIGHTED = Identifier.ofVanilla("transferable_list/move_up_highlighted")
-    private val MOVE_UP = Identifier.ofVanilla("transferable_list/move_up")
-    private val MOVE_DOWN_HIGHLIGHTED = Identifier.ofVanilla("transferable_list/move_down_highlighted")
-    private val MOVE_DOWN = Identifier.ofVanilla("transferable_list/move_down")
+    private val SELECT_HIGHLIGHTED = Identifier.withDefaultNamespace("transferable_list/select_highlighted")
+    private val SELECT = Identifier.withDefaultNamespace("transferable_list/select")
+    private val UNSELECT_HIGHLIGHTED = Identifier.withDefaultNamespace("transferable_list/unselect_highlighted")
+    private val UNSELECT = Identifier.withDefaultNamespace("transferable_list/unselect")
+    private val MOVE_UP_HIGHLIGHTED = Identifier.withDefaultNamespace("transferable_list/move_up_highlighted")
+    private val MOVE_UP = Identifier.withDefaultNamespace("transferable_list/move_up")
+    private val MOVE_DOWN_HIGHLIGHTED = Identifier.withDefaultNamespace("transferable_list/move_down_highlighted")
+    private val MOVE_DOWN = Identifier.withDefaultNamespace("transferable_list/move_down")
     private val ARROW_SIZE = 32
 
     // Pack icon cache
@@ -57,7 +56,7 @@ class EditProfileScreen(
         listBottom = height - 56
 
         val profile = ProfileManager.getProfiles().find { it.name == originalName } ?: run {
-            close()
+            onClose()
             return
         }
         selectedPacks = profile.packIds.reversed().toMutableList()
@@ -66,48 +65,48 @@ class EditProfileScreen(
         val centerX = width / 2
 
         // Name field at top
-        nameField = TextFieldWidget(textRenderer, centerX - 100, 16, 200, 20, Text.literal("Profile Name"))
+        nameField = EditBox(font, centerX - 100, 16, 200, 20, Component.literal("Profile Name"))
         nameField.setMaxLength(64)
-        nameField.text = originalName
-        addDrawableChild(nameField)
+        nameField.value = originalName
+        addRenderableWidget(nameField)
 
         // Change Icon button
-        addDrawableChild(ButtonWidget.builder(Text.literal("Icon...")) {
+        addRenderableWidget(Button.builder(Component.literal("Icon...")) {
             Thread {
                 ProfileIconManager.openFilePickerAndImport(originalName)
             }.start()
-        }.dimensions(centerX + 104, 16, 40, 20).build())
+        }.bounds(centerX + 104, 16, 40, 20).build())
 
         // Remove Icon button
-        addDrawableChild(ButtonWidget.builder(Text.literal("✕")) {
+        addRenderableWidget(Button.builder(Component.literal("✕")) {
             ProfileIconManager.deleteCustomIcon(
                 ProfileManager.getProfiles().find { it.name == originalName } ?: return@builder
             )
             ProfileManager.setCustomIcon(originalName, null)
             ProfileIconManager.invalidate(originalName)
-        }.dimensions(centerX + 148, 16, 20, 20).build())
+        }.bounds(centerX + 148, 16, 20, 20).build())
 
         // Save & Cancel at bottom
-        addDrawableChild(ButtonWidget.builder(Text.literal("Done")) { onSave() }
-            .dimensions(centerX - 104, height - 28, 100, 20).build())
-        addDrawableChild(ButtonWidget.builder(Text.literal("Cancel")) { close() }
-            .dimensions(centerX + 4, height - 28, 100, 20).build())
+        addRenderableWidget(Button.builder(Component.literal("Done")) { onSave() }
+            .bounds(centerX - 104, height - 28, 100, 20).build())
+        addRenderableWidget(Button.builder(Component.literal("Cancel")) { onClose() }
+            .bounds(centerX + 4, height - 28, 100, 20).build())
 
         // Export button — bottom right corner (blank label, icon drawn in render)
-        addDrawableChild(ButtonWidget.builder(Text.literal(" ")) { onExport() }
-            .dimensions(width - 24, height - 28, 20, 20)
-            .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(Text.literal("Export Profile")))
+        addRenderableWidget(Button.builder(Component.literal(" ")) { onExport() }
+            .bounds(width - 24, height - 28, 20, 20)
+            .tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal("Export Profile")))
             .build())
     }
 
     private var allKnownPackIds = setOf<String>()
 
     private fun recomputeAvailable() {
-        val client = client ?: return
-        allKnownPackIds = client.resourcePackManager.profiles.map { it.id }.toSet()
+        val client = minecraft ?: return
+        allKnownPackIds = client.resourcePackRepository.availablePacks.map { it.id }.toSet()
         val currentSet = selectedPacks.toSet()
-        availablePacks = client.resourcePackManager.profiles
-            .filter { it.getSource().canBeEnabledLater() && !it.isRequired }
+        availablePacks = client.resourcePackRepository.availablePacks
+            .filter { it.packSource.shouldAddAutomatically() && !it.isRequired }
             .map { it.id }
             .filter { it !in currentSet }
             .toMutableList()
@@ -117,9 +116,9 @@ class EditProfileScreen(
         return packId !in allKnownPackIds
     }
 
-    private fun resolvePackProfile(packId: String): ResourcePackProfile? {
-        val client = client ?: return null
-        return client.resourcePackManager.profiles.find { it.id == packId }
+    private fun resolvePackProfile(packId: String): Pack? {
+        val client = minecraft ?: return null
+        return client.resourcePackRepository.availablePacks.find { it.id == packId }
     }
 
     private fun getPackIconId(packId: String): Identifier {
@@ -128,9 +127,9 @@ class EditProfileScreen(
         val packProfile = resolvePackProfile(packId)
         if (packProfile != null) {
             try {
-                val pack = packProfile.createResourcePack()
+                val pack = packProfile.open()
                 if (pack != null) {
-                    val iconSupplier = pack.openRoot("pack.png")
+                    val iconSupplier = pack.getRootResource("pack.png")
                     if (iconSupplier != null) {
                         val image = iconSupplier.get().use { NativeImage.read(it) }
                         val id = registerPackTexture(packId, image)
@@ -142,20 +141,20 @@ class EditProfileScreen(
             }
         }
 
-        return Identifier.ofVanilla("textures/misc/unknown_pack.png")
+        return Identifier.withDefaultNamespace("textures/misc/unknown_pack.png")
     }
 
     private fun registerPackTexture(packId: String, image: NativeImage): Identifier {
-        val client = client ?: return Identifier.ofVanilla("textures/misc/unknown_pack.png")
+        val client = minecraft ?: return Identifier.withDefaultNamespace("textures/misc/unknown_pack.png")
         val sanitized = packId.lowercase().replace(Regex("[^a-z0-9_.-/]"), "_")
-        val id = Identifier.of("resourcepackprofiles", "edit_pack_icon/$sanitized")
+        val id = Identifier.fromNamespaceAndPath("resourcepackprofiles", "edit_pack_icon/$sanitized")
 
         if (id in registeredPackTextures) {
-            client.textureManager.destroyTexture(id)
+            client.textureManager.release(id)
         }
 
-        val texture = NativeImageBackedTexture({ "resourcepackprofiles/edit_pack_icon/$sanitized" }, image)
-        client.textureManager.registerTexture(id, texture)
+        val texture = DynamicTexture({ "resourcepackprofiles/edit_pack_icon/$sanitized" }, image)
+        client.textureManager.register(id, texture)
         registeredPackTextures.add(id)
         return id
     }
@@ -168,7 +167,7 @@ class EditProfileScreen(
     }
 
     private fun onSave() {
-        val newName = nameField.text.trim()
+        val newName = nameField.value.trim()
         if (newName.isEmpty()) return
 
         val packsToSave = selectedPacks.reversed()
@@ -179,10 +178,10 @@ class EditProfileScreen(
             ProfileManager.updateProfile(originalName, packsToSave)
         }
 
-        close()
+        onClose()
     }
 
-    private fun drawExportIcon(context: DrawContext, bx: Int, by: Int) {
+    private fun drawExportIcon(context: GuiGraphicsExtractor, bx: Int, by: Int) {
         val white = 0xFFFFFFFF.toInt()
         // Box: open-top rectangle (bottom + left + right sides)
         context.fill(bx + 4, by + 15, bx + 16, by + 16, white)  // bottom
@@ -197,8 +196,8 @@ class EditProfileScreen(
         context.fill(bx + 11, by + 6, bx + 12, by + 7, white)   // right tip
     }
 
-    override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
-        super.render(context, mouseX, mouseY, delta)
+    override fun extractRenderState(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
+        super.extractRenderState(context, mouseX, mouseY, delta)
 
         val centerX = width / 2
 
@@ -211,7 +210,7 @@ class EditProfileScreen(
             val iconId = ProfileIconManager.getIconId(profile)
             val iconX = centerX - 124
             val iconY = 16
-            context.drawTexture(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, 20, 20, 20, 20)
+            context.blit(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, 20, 20, 20, 20)
         }
         val columnWidth = centerX - 12
         val leftX = 4
@@ -219,11 +218,11 @@ class EditProfileScreen(
         val listHeight = listBottom - listTop
 
         // Column headers
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal("Available"), leftX + columnWidth / 2, listTop - 10, 0xAAAAAA or (0xFF shl 24))
+        context.centeredText(font, Component.literal("Available"), leftX + columnWidth / 2, listTop - 10, 0xAAAAAA or (0xFF shl 24))
         val missingCount = selectedPacks.count { isPackMissing(it) }
         val selectedHeader = if (missingCount > 0) "Selected ($missingCount missing)" else "Selected"
         val selectedHeaderColor = if (missingCount > 0) 0xFF5555 or (0xFF shl 24) else 0xAAAAAA or (0xFF shl 24)
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal(selectedHeader), rightX + columnWidth / 2, listTop - 10, selectedHeaderColor)
+        context.centeredText(font, Component.literal(selectedHeader), rightX + columnWidth / 2, listTop - 10, selectedHeaderColor)
 
         // Draw list backgrounds
         context.fill(leftX, listTop, leftX + columnWidth, listBottom, 0x80000000.toInt())
@@ -255,7 +254,7 @@ class EditProfileScreen(
     }
 
     private fun renderPackList(
-        context: DrawContext,
+        context: GuiGraphicsExtractor,
         packs: List<String>,
         x: Int,
         columnWidth: Int,
@@ -277,7 +276,7 @@ class EditProfileScreen(
 
             // Pack icon
             val iconId = getPackIconId(packId)
-            context.drawTexture(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, packIconSize, packIconSize, packIconSize, packIconSize)
+            context.blit(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, packIconSize, packIconSize, packIconSize, packIconSize)
 
             // On hover: white haze over icon + arrow sprites on top of icon
             if (isHovered) {
@@ -287,44 +286,44 @@ class EditProfileScreen(
                     val arrowRegion = getHoveredArrowRegion(mouseX, mouseY, iconX, iconY)
 
                     val unselectSprite = if (arrowRegion == ArrowRegion.UNSELECT) UNSELECT_HIGHLIGHTED else UNSELECT
-                    context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, unselectSprite, iconX, iconY, packIconSize, packIconSize)
+                    context.blitSprite(RenderPipelines.GUI_TEXTURED, unselectSprite, iconX, iconY, packIconSize, packIconSize)
 
                     if (index > 0) {
                         val upSprite = if (arrowRegion == ArrowRegion.MOVE_UP) MOVE_UP_HIGHLIGHTED else MOVE_UP
-                        context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, upSprite, iconX, iconY, packIconSize, packIconSize)
+                        context.blitSprite(RenderPipelines.GUI_TEXTURED, upSprite, iconX, iconY, packIconSize, packIconSize)
                     }
 
                     if (index < packs.size - 1) {
                         val downSprite = if (arrowRegion == ArrowRegion.MOVE_DOWN) MOVE_DOWN_HIGHLIGHTED else MOVE_DOWN
-                        context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, downSprite, iconX, iconY, packIconSize, packIconSize)
+                        context.blitSprite(RenderPipelines.GUI_TEXTURED, downSprite, iconX, iconY, packIconSize, packIconSize)
                     }
                 } else {
                     val selectSprite = if (mouseX >= iconX && mouseX < iconX + packIconSize && mouseY >= iconY && mouseY < iconY + packIconSize) SELECT_HIGHLIGHTED else SELECT
-                    context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, selectSprite, iconX, iconY, packIconSize, packIconSize)
+                    context.blitSprite(RenderPipelines.GUI_TEXTURED, selectSprite, iconX, iconY, packIconSize, packIconSize)
                 }
             }
 
             // Pack name and description
             val packProfile = resolvePackProfile(packId)
             val missing = isSelectedList && isPackMissing(packId)
-            val displayName = packProfile?.displayName?.string ?: packId
+            val displayName = packProfile?.title?.string ?: packId
             val textX = x + listPadding + packIconSize + 4
             val maxTextWidth = columnWidth - packIconSize - listPadding * 2 - 4
             val nameColor = if (missing) 0xFF5555 or (0xFF shl 24) else 0xFFFFFF or (0xFF shl 24)
-            context.drawText(textRenderer, Text.literal(truncateText(displayName, maxTextWidth)), textX, entryY + 4, nameColor, true)
+            context.text(font, Component.literal(truncateText(displayName, maxTextWidth)), textX, entryY + 4, nameColor, true)
 
             val description = if (missing) "Missing — pack not found" else packProfile?.description?.string ?: ""
             if (description.isNotEmpty()) {
                 val descColor = if (missing) 0xFF5555 or (0xFF shl 24) else 0x808080 or (0xFF shl 24)
-                context.drawText(textRenderer, Text.literal(truncateText(description, maxTextWidth)), textX, entryY + 16, descColor, false)
+                context.text(font, Component.literal(truncateText(description, maxTextWidth)), textX, entryY + 16, descColor, false)
             }
         }
     }
 
     private fun truncateText(text: String, maxWidth: Int): String {
-        if (textRenderer.getWidth(text) <= maxWidth) return text
+        if (font.width(text) <= maxWidth) return text
         var s = text
-        while (textRenderer.getWidth("$s...") > maxWidth && s.isNotEmpty()) {
+        while (font.width("$s...") > maxWidth && s.isNotEmpty()) {
             s = s.dropLast(1)
         }
         return "$s..."
@@ -350,14 +349,14 @@ class EditProfileScreen(
         }
     }
 
-    private fun drawScrollbar(context: DrawContext, x: Int, top: Int, height: Int, scrollPos: Double, maxScroll: Int) {
+    private fun drawScrollbar(context: GuiGraphicsExtractor, x: Int, top: Int, height: Int, scrollPos: Double, maxScroll: Int) {
         if (maxScroll <= 0) return
         val barHeight = (height.toDouble() * height / (height + maxScroll)).toInt().coerceAtLeast(8)
         val barY = top + ((height - barHeight) * (scrollPos / maxScroll)).toInt()
         context.fill(x, barY, x + 3, barY + barHeight, 0x80FFFFFF.toInt())
     }
 
-    override fun mouseClicked(click: Click, doubled: Boolean): Boolean {
+    override fun mouseClicked(click: MouseButtonEvent, doubled: Boolean): Boolean {
         val mx = click.x().toInt()
         val my = click.y().toInt()
 
@@ -439,17 +438,17 @@ class EditProfileScreen(
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount)
     }
 
-    override fun close() {
+    override fun onClose() {
         // Clean up registered pack textures
-        val client = client
+        val client = minecraft
         if (client != null) {
             for (id in registeredPackTextures) {
-                client.textureManager.destroyTexture(id)
+                client.textureManager.release(id)
             }
         }
         registeredPackTextures.clear()
         packIconCache.clear()
 
-        client?.setScreen(parent)
+        minecraft?.setScreen(parent)
     }
 }

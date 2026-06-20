@@ -2,8 +2,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "2.3.10"
-    id("fabric-loom") version "1.15-SNAPSHOT"
+    kotlin("jvm") version "2.4.0"
+    id("fabric-loom") version "1.16-SNAPSHOT"
     id("maven-publish")
 }
 
@@ -14,13 +14,9 @@ base {
     archivesName.set(project.property("archives_base_name") as String)
 }
 
-val targetJavaVersion = 21
+val targetJavaVersion = 25
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
-    // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
-    // if it is present.
-    // If you remove this line, sources will not be generated.
-    withSourcesJar()
 }
 
 loom {
@@ -47,12 +43,16 @@ repositories {
 dependencies {
     // To change the versions see the gradle.properties file
     minecraft("com.mojang:minecraft:${project.property("minecraft_version")}")
-    mappings("net.fabricmc:yarn:${project.property("yarn_mappings")}:v2")
-    modImplementation("net.fabricmc:fabric-loader:${project.property("loader_version")}")
-    modImplementation("net.fabricmc:fabric-language-kotlin:${project.property("kotlin_loader_version")}")
+    // 26.x ships unobfuscated, so there are no mappings to apply; intermediary v0.0.0 is an
+    // identity passthrough that satisfies Loom's requirement for a non-empty `mappings` config.
+    mappings("net.fabricmc:intermediary:0.0.0:v2")
+    implementation("net.fabricmc:fabric-loader:${project.property("loader_version")}")
+    implementation("net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7")
+    implementation("net.fabricmc:fabric-language-kotlin:${project.property("kotlin_loader_version")}")
 
-    modImplementation("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_version")}")
-    modImplementation("com.terraformersmc:modmenu:17.0.0-beta.2")
+    implementation("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_version")}")
+    // ModMenu 18.0.0-beta.1 targets 26.1.x; alpha builds target 1.21.x and 19.x+ require MC >=26.2.
+    implementation("com.terraformersmc:modmenu:18.0.0-beta.1")
 }
 
 tasks.processResources {
