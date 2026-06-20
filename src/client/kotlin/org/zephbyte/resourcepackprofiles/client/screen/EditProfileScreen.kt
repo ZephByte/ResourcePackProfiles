@@ -1,10 +1,12 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
 import com.mojang.blaze3d.platform.NativeImage
+import net.minecraft.ChatFormatting
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.input.MouseButtonEvent
 import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.client.gui.components.ObjectSelectionList
 import net.minecraft.client.gui.screens.Screen
 import net.minecraft.client.gui.components.Button
 import net.minecraft.client.gui.components.EditBox
@@ -32,25 +34,29 @@ class EditProfileScreen(
 
     private lateinit var nameField: EditBox
 
-    // Editing state — pack IDs
+    // Editing state — pack IDs. selectedPacks is stored top-to-bottom display order (reversed
+    // relative to load order); availablePacks is everything assignable that isn't selected.
     private var selectedPacks = mutableListOf<String>()
     private var availablePacks = mutableListOf<String>()
+    private var allKnownPackIds = setOf<String>()
+
+    private lateinit var availableList: PackList
+    private lateinit var selectedList: PackList
 
     // Staged icon changes — applied on Done, discarded on Cancel (consistent with name/pack edits)
     private var pendingIconPath: Path? = null
     private var pendingIconRemove = false
 
-    // Scroll state (pixel-based for smooth scrolling)
-    private var availableScrollY = 0.0
-    private var selectedScrollY = 0.0
-
-    // Layout constants
+    // Layout constants — mirror the vanilla pack screen: two 200px-wide lists with an 8px gap
+    // centred on the screen.
     private val entryHeight = 36
     private val packIconSize = 32
-    private val listTop = 48
-    private var listBottom = 0
-    private val listPadding = 4
-    private val scrollSpeed = 12.0
+    private val iconInset = 2
+    private val listTop = 54
+    private val listWidth = 200
+    private val listBottom get() = height - 42
+    private val leftColX get() = width / 2 - 4 - listWidth
+    private val rightColX get() = width / 2 + 4
 
     // Vanilla arrow sprite IDs
     private val SELECT_HIGHLIGHTED = Identifier.withDefaultNamespace("transferable_list/select_highlighted")
@@ -68,8 +74,6 @@ class EditProfileScreen(
     private val previewTextures = DynamicTextureCache("edit_icon_preview")
 
     override fun init() {
-        listBottom = height - 56
-
         val profile = ProfileManager.getProfiles().find { it.name == originalName } ?: run {
             onClose()
             return
@@ -78,6 +82,18 @@ class EditProfileScreen(
         recomputeAvailable()
 
         val centerX = width / 2
+        val listHeight = listBottom - listTop
+
+        availableList = PackList(minecraft, listWidth, listHeight, false)
+        availableList.updateSizeAndPosition(listWidth, listHeight, leftColX, listTop)
+        addRenderableWidget(availableList)
+
+        selectedList = PackList(minecraft, listWidth, listHeight, true)
+        selectedList.updateSizeAndPosition(listWidth, listHeight, rightColX, listTop)
+        addRenderableWidget(selectedList)
+
+        availableList.rebuild(availablePacks)
+        selectedList.rebuild(selectedPacks)
 
         // Name field at top
         nameField = EditBox(font, centerX - 100, 16, 200, 20, Component.translatable("field.resourcepackprofiles.profile_name"))
@@ -123,8 +139,6 @@ class EditProfileScreen(
             .build())
     }
 
-    private var allKnownPackIds = setOf<String>()
-
     private fun recomputeAvailable() {
         allKnownPackIds = minecraft.resourcePackRepository.availablePacks.map { it.id }.toSet()
         val currentSet = selectedPacks.toSet()
@@ -135,12 +149,18 @@ class EditProfileScreen(
             .toMutableList()
     }
 
+    /** Rebuilds both lists after the selected set changes (add/remove). */
+    private fun rebuildLists() {
+        recomputeAvailable()
+        availableList.rebuild(availablePacks)
+        selectedList.rebuild(selectedPacks)
+        if (pendingIconRemove) previewTextures.invalidate(PREVIEW_KEY)
+    }
+
     private fun isPackMissing(packId: String): Boolean = packId !in allKnownPackIds
 
-    private fun resolvePackProfile(packId: String): Pack? {
-        val client = minecraft ?: return null
-        return client.resourcePackRepository.availablePacks.find { it.id == packId }
-    }
+    private fun resolvePackProfile(packId: String): Pack? =
+        minecraft.resourcePackRepository.availablePacks.find { it.id == packId }
 
     private fun getPackIconId(packId: String): Identifier =
         packTextures.getOrRegister(packId, UNKNOWN_PACK) { PackIcons.read(packId) }
@@ -210,124 +230,27 @@ class EditProfileScreen(
 
         val centerX = width / 2
 
-        // Draw export icon on the export button
+        // Export icon glyph on the otherwise-blank export button
         ScreenUtils.drawTransferIcon(context, centerX + 108, height - 28, into = false)
 
-        // Draw current profile icon next to the name field (reflects staged changes)
+        // Profile icon preview next to the name field (reflects staged changes)
         val profile = ProfileManager.getProfiles().find { it.name == originalName }
         if (profile != null) {
-            val iconId = previewIconId(profile)
-            context.blit(RenderPipelines.GUI_TEXTURED, iconId, centerX - 124, 16, 0f, 0f, 20, 20, 20, 20)
+            context.blit(RenderPipelines.GUI_TEXTURED, previewIconId(profile), centerX - 124, 16, 0f, 0f, 20, 20, 20, 20)
         }
-        val columnWidth = centerX - 12
-        val leftX = 4
-        val rightX = centerX + 8
-        val listHeight = listBottom - listTop
 
-        // Column headers
-        context.centeredText(font, Component.translatable("label.resourcepackprofiles.available"), leftX + columnWidth / 2, listTop - 10, 0xFFAAAAAA.toInt())
+        // Column headers — vanilla styles these bold + underlined + white
+        val availableHeader = Component.translatable("label.resourcepackprofiles.available")
+            .withStyle(ChatFormatting.BOLD, ChatFormatting.UNDERLINE, ChatFormatting.WHITE)
+        context.centeredText(font, availableHeader, leftColX + listWidth / 2, listTop - 12, 0xFFFFFFFF.toInt())
+
         val missingCount = selectedPacks.count { isPackMissing(it) }
-        val selectedHeader = if (missingCount > 0)
+        val selectedHeader = (if (missingCount > 0)
             Component.translatable("label.resourcepackprofiles.selected_missing", missingCount)
         else
-            Component.translatable("label.resourcepackprofiles.selected")
-        val selectedHeaderColor = if (missingCount > 0) 0xFFFF5555.toInt() else 0xFFAAAAAA.toInt()
-        context.centeredText(font, selectedHeader, rightX + columnWidth / 2, listTop - 10, selectedHeaderColor)
-
-        // Draw list backgrounds
-        context.fill(leftX, listTop, leftX + columnWidth, listBottom, 0x80000000.toInt())
-        context.fill(rightX, listTop, rightX + columnWidth, listBottom, 0x80000000.toInt())
-
-        // Clamp scroll values
-        val maxAvailScroll = ((availablePacks.size * entryHeight) - listHeight).coerceAtLeast(0)
-        val maxSelScroll = ((selectedPacks.size * entryHeight) - listHeight).coerceAtLeast(0)
-        availableScrollY = availableScrollY.coerceIn(0.0, maxAvailScroll.toDouble())
-        selectedScrollY = selectedScrollY.coerceIn(0.0, maxSelScroll.toDouble())
-
-        // Enable scissor for left list
-        context.enableScissor(leftX, listTop, leftX + columnWidth, listBottom)
-        renderPackList(context, availablePacks, leftX, columnWidth, availableScrollY.toInt(), mouseX, mouseY, false)
-        context.disableScissor()
-
-        // Enable scissor for right list
-        context.enableScissor(rightX, listTop, rightX + columnWidth, listBottom)
-        renderPackList(context, selectedPacks, rightX, columnWidth, selectedScrollY.toInt(), mouseX, mouseY, true)
-        context.disableScissor()
-
-        // Draw scrollbar indicators
-        if (availablePacks.size * entryHeight > listHeight) {
-            drawScrollbar(context, leftX + columnWidth - 4, listHeight, availableScrollY, maxAvailScroll)
-        }
-        if (selectedPacks.size * entryHeight > listHeight) {
-            drawScrollbar(context, rightX + columnWidth - 4, listHeight, selectedScrollY, maxSelScroll)
-        }
-    }
-
-    private fun renderPackList(
-        context: GuiGraphicsExtractor,
-        packs: List<String>,
-        x: Int,
-        columnWidth: Int,
-        scrollOffset: Int,
-        mouseX: Int,
-        mouseY: Int,
-        isSelectedList: Boolean
-    ) {
-        for ((index, packId) in packs.withIndex()) {
-            val entryY = listTop + index * entryHeight - scrollOffset
-            if (entryY + entryHeight < listTop || entryY > listBottom) continue
-
-            val iconX = x + listPadding
-            val iconY = entryY + (entryHeight - packIconSize) / 2
-
-            val isHovered = mouseX >= x && mouseX < x + columnWidth
-                    && mouseY >= entryY.coerceAtLeast(listTop) && mouseY < (entryY + entryHeight).coerceAtMost(listBottom)
-                    && mouseY >= listTop && mouseY < listBottom
-
-            // Pack icon
-            val iconId = getPackIconId(packId)
-            context.blit(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, packIconSize, packIconSize, packIconSize, packIconSize)
-
-            // On hover: white haze over icon + arrow sprites on top of icon
-            if (isHovered) {
-                context.fill(iconX, iconY, iconX + packIconSize, iconY + packIconSize, 0x80FFFFFF.toInt())
-
-                if (isSelectedList) {
-                    val arrowRegion = getHoveredArrowRegion(mouseX, mouseY, iconX, iconY)
-
-                    val unselectSprite = if (arrowRegion == ArrowRegion.UNSELECT) UNSELECT_HIGHLIGHTED else UNSELECT
-                    context.blitSprite(RenderPipelines.GUI_TEXTURED, unselectSprite, iconX, iconY, packIconSize, packIconSize)
-
-                    if (index > 0) {
-                        val upSprite = if (arrowRegion == ArrowRegion.MOVE_UP) MOVE_UP_HIGHLIGHTED else MOVE_UP
-                        context.blitSprite(RenderPipelines.GUI_TEXTURED, upSprite, iconX, iconY, packIconSize, packIconSize)
-                    }
-
-                    if (index < packs.size - 1) {
-                        val downSprite = if (arrowRegion == ArrowRegion.MOVE_DOWN) MOVE_DOWN_HIGHLIGHTED else MOVE_DOWN
-                        context.blitSprite(RenderPipelines.GUI_TEXTURED, downSprite, iconX, iconY, packIconSize, packIconSize)
-                    }
-                } else {
-                    val selectSprite = if (mouseX >= iconX && mouseX < iconX + packIconSize && mouseY >= iconY && mouseY < iconY + packIconSize) SELECT_HIGHLIGHTED else SELECT
-                    context.blitSprite(RenderPipelines.GUI_TEXTURED, selectSprite, iconX, iconY, packIconSize, packIconSize)
-                }
-            }
-
-            // Pack name and description
-            val packProfile = resolvePackProfile(packId)
-            val missing = isSelectedList && isPackMissing(packId)
-            val displayName = packProfile?.title?.string ?: packId
-            val textX = x + listPadding + packIconSize + 4
-            val maxTextWidth = columnWidth - packIconSize - listPadding * 2 - 4
-            val nameColor = if (missing) 0xFFFF5555.toInt() else 0xFFFFFFFF.toInt()
-            context.text(font, Component.literal(ScreenUtils.truncate(font, displayName, maxTextWidth)), textX, entryY + 4, nameColor, true)
-
-            val description = if (missing) Component.translatable("label.resourcepackprofiles.pack_missing").string else packProfile?.description?.string ?: ""
-            if (description.isNotEmpty()) {
-                val descColor = if (missing) 0xFFFF5555.toInt() else 0xFF808080.toInt()
-                context.text(font, Component.literal(ScreenUtils.truncate(font, description, maxTextWidth)), textX, entryY + 16, descColor, false)
-            }
-        }
+            Component.translatable("label.resourcepackprofiles.selected"))
+            .withStyle(ChatFormatting.BOLD, ChatFormatting.UNDERLINE, if (missingCount > 0) ChatFormatting.RED else ChatFormatting.WHITE)
+        context.centeredText(font, selectedHeader, rightColX + listWidth / 2, listTop - 12, 0xFFFFFFFF.toInt())
     }
 
     private enum class ArrowRegion { NONE, UNSELECT, MOVE_UP, MOVE_DOWN }
@@ -340,7 +263,6 @@ class EditProfileScreen(
         val relX = mouseX - iconX
         val relY = mouseY - iconY
         if (relX < 0 || relX >= packIconSize || relY < 0 || relY >= packIconSize) return ArrowRegion.NONE
-
         return if (relX < packIconSize / 2) {
             ArrowRegion.UNSELECT
         } else if (relY < packIconSize / 2) {
@@ -350,95 +272,126 @@ class EditProfileScreen(
         }
     }
 
-    private fun drawScrollbar(context: GuiGraphicsExtractor, x: Int, height: Int, scrollPos: Double, maxScroll: Int) {
-        if (maxScroll <= 0) return
-        val barHeight = (height.toDouble() * height / (height + maxScroll)).toInt().coerceAtLeast(8)
-        val barY = listTop + ((height - barHeight) * (scrollPos / maxScroll)).toInt()
-        context.fill(x, barY, x + 3, barY + barHeight, 0x80FFFFFF.toInt())
-    }
-
-    override fun mouseClicked(click: MouseButtonEvent, doubled: Boolean): Boolean {
-        val mx = click.x().toInt()
-        val my = click.y().toInt()
-
-        if (my >= listTop && my < listBottom) {
-            val centerX = width / 2
-            val columnWidth = centerX - 12
-            val leftX = 4
-            val rightX = centerX + 8
-
-            // Click on available pack (left) → add to selected
-            if (mx >= leftX && mx < leftX + columnWidth) {
-                val index = (my - listTop + availableScrollY.toInt()) / entryHeight
-                if (index in availablePacks.indices) {
-                    val entryY = listTop + index * entryHeight - availableScrollY.toInt()
-                    val iconX = leftX + listPadding
-                    val iconY = entryY + (entryHeight - packIconSize) / 2
-                    // Only add if clicking on the icon area
-                    if (mx >= iconX && mx < iconX + packIconSize && my >= iconY && my < iconY + packIconSize) {
-                        selectedPacks.add(availablePacks[index])
-                        recomputeAvailable()
-                        onSelectedPacksChanged()
-                        return true
-                    }
-                }
-            }
-
-            // Click on selected pack (right) — check arrow regions on icon
-            if (mx >= rightX && mx < rightX + columnWidth) {
-                val index = (my - listTop + selectedScrollY.toInt()) / entryHeight
-                if (index in selectedPacks.indices) {
-                    val entryY = listTop + index * entryHeight - selectedScrollY.toInt()
-                    val iconX = rightX + listPadding
-                    val iconY = entryY + (entryHeight - packIconSize) / 2
-                    val region = getHoveredArrowRegion(mx, my, iconX, iconY)
-
-                    when (region) {
-                        ArrowRegion.UNSELECT -> {
-                            selectedPacks.removeAt(index)
-                            recomputeAvailable()
-                            onSelectedPacksChanged()
-                        }
-                        ArrowRegion.MOVE_UP -> if (index > 0) {
-                            selectedPacks[index] = selectedPacks.set(index - 1, selectedPacks[index])
-                            onSelectedPacksChanged()
-                        }
-                        ArrowRegion.MOVE_DOWN -> if (index < selectedPacks.size - 1) {
-                            selectedPacks[index] = selectedPacks.set(index + 1, selectedPacks[index])
-                            onSelectedPacksChanged()
-                        }
-                        ArrowRegion.NONE -> {}
-                    }
-                    return true
-                }
-            }
-        }
-
-        return super.mouseClicked(click, doubled)
-    }
-
-    /** Keeps the staged remove-icon composite preview in sync with the current pack selection. */
-    private fun onSelectedPacksChanged() {
-        if (pendingIconRemove) previewTextures.invalidate(PREVIEW_KEY)
-    }
-
-    override fun mouseScrolled(mouseX: Double, mouseY: Double, horizontalAmount: Double, verticalAmount: Double): Boolean {
-        if (mouseY >= listTop && mouseY < listBottom) {
-            val centerX = width / 2
-            if (mouseX < centerX) {
-                availableScrollY = (availableScrollY - verticalAmount * scrollSpeed).coerceAtLeast(0.0)
-            } else {
-                selectedScrollY = (selectedScrollY - verticalAmount * scrollSpeed).coerceAtLeast(0.0)
-            }
-            return true
-        }
-        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount)
-    }
-
     override fun onClose() {
         packTextures.cleanup()
         previewTextures.cleanup()
         minecraft.setScreen(parent)
+    }
+
+    /** One pack column. [isSelectedList] toggles add-vs-reorder behaviour and the hover affordance. */
+    private inner class PackList(mc: Minecraft, w: Int, h: Int, private val isSelectedList: Boolean) :
+        ObjectSelectionList<PackEntry>(mc, w, h, listTop, entryHeight) {
+
+        override fun getRowWidth(): Int = width - 4
+
+        // Place the scrollbar at the list's right edge, like vanilla's TransferableSelectionList
+        override fun scrollBarX(): Int = x + width - scrollbarWidth()
+
+        fun rebuild(packIds: List<String>) = replaceEntries(packIds.map { PackEntry(it, isSelectedList) })
+
+        /** Swap two entries in place (preserves scroll, unlike a full rebuild). */
+        fun swapEntries(a: Int, b: Int) = swap(a, b)
+    }
+
+    private inner class PackEntry(private val packId: String, private val isSelectedList: Boolean) :
+        ObjectSelectionList.Entry<PackEntry>() {
+
+        override fun getNarration(): Component =
+            Component.literal(resolvePackProfile(packId)?.title?.string ?: packId)
+
+        private fun iconX() = contentX + iconInset
+        private fun iconY() = (y + height / 2) - packIconSize / 2
+
+        override fun mouseClicked(event: MouseButtonEvent, doubled: Boolean): Boolean {
+            val mx = event.x().toInt()
+            val my = event.y().toInt()
+            val iconX = iconX()
+            val iconY = iconY()
+
+            if (!isSelectedList) {
+                // Available column: click the icon to add to the top of the selected set
+                // (top = highest priority, matching vanilla)
+                if (mx >= iconX && mx < iconX + packIconSize && my >= iconY && my < iconY + packIconSize) {
+                    selectedPacks.add(0, packId)
+                    rebuildLists()
+                    return true
+                }
+                return false
+            }
+
+            // Selected column: act on the hovered arrow region
+            val index = selectedPacks.indexOf(packId)
+            if (index < 0) return false
+            when (getHoveredArrowRegion(mx, my, iconX, iconY)) {
+                ArrowRegion.UNSELECT -> {
+                    selectedPacks.removeAt(index)
+                    rebuildLists()
+                    return true
+                }
+                ArrowRegion.MOVE_UP -> if (index > 0) {
+                    selectedPacks[index] = selectedPacks.set(index - 1, selectedPacks[index])
+                    selectedList.swapEntries(index, index - 1)
+                    if (pendingIconRemove) previewTextures.invalidate(PREVIEW_KEY)
+                    return true
+                }
+                ArrowRegion.MOVE_DOWN -> if (index < selectedPacks.size - 1) {
+                    selectedPacks[index] = selectedPacks.set(index + 1, selectedPacks[index])
+                    selectedList.swapEntries(index, index + 1)
+                    if (pendingIconRemove) previewTextures.invalidate(PREVIEW_KEY)
+                    return true
+                }
+                ArrowRegion.NONE -> {}
+            }
+            return false
+        }
+
+        override fun extractContent(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, delta: Float) {
+            val iconX = iconX()
+            val iconY = iconY()
+            val centerY = y + height / 2
+
+            // Pack icon
+            context.blit(RenderPipelines.GUI_TEXTURED, getPackIconId(packId), iconX, iconY, 0f, 0f, packIconSize, packIconSize, packIconSize, packIconSize)
+
+            // Hover overlay: white haze + the relevant arrow sprite(s)
+            if (hovered) {
+                context.fill(iconX, iconY, iconX + packIconSize, iconY + packIconSize, 0x80FFFFFF.toInt())
+                if (isSelectedList) {
+                    val region = getHoveredArrowRegion(mouseX, mouseY, iconX, iconY)
+                    val index = selectedPacks.indexOf(packId)
+
+                    val unselectSprite = if (region == ArrowRegion.UNSELECT) UNSELECT_HIGHLIGHTED else UNSELECT
+                    context.blitSprite(RenderPipelines.GUI_TEXTURED, unselectSprite, iconX, iconY, packIconSize, packIconSize)
+                    if (index > 0) {
+                        val upSprite = if (region == ArrowRegion.MOVE_UP) MOVE_UP_HIGHLIGHTED else MOVE_UP
+                        context.blitSprite(RenderPipelines.GUI_TEXTURED, upSprite, iconX, iconY, packIconSize, packIconSize)
+                    }
+                    if (index in 0 until selectedPacks.size - 1) {
+                        val downSprite = if (region == ArrowRegion.MOVE_DOWN) MOVE_DOWN_HIGHLIGHTED else MOVE_DOWN
+                        context.blitSprite(RenderPipelines.GUI_TEXTURED, downSprite, iconX, iconY, packIconSize, packIconSize)
+                    }
+                } else {
+                    val overIcon = mouseX >= iconX && mouseX < iconX + packIconSize && mouseY >= iconY && mouseY < iconY + packIconSize
+                    val selectSprite = if (overIcon) SELECT_HIGHLIGHTED else SELECT
+                    context.blitSprite(RenderPipelines.GUI_TEXTURED, selectSprite, iconX, iconY, packIconSize, packIconSize)
+                }
+            }
+
+            // Pack name and description
+            val packProfile = resolvePackProfile(packId)
+            val missing = isSelectedList && isPackMissing(packId)
+            val displayName = packProfile?.title?.string ?: packId
+            val textX = iconX + packIconSize + 4
+            val maxTextWidth = contentRight - iconInset - textX
+            val nameColor = if (missing) 0xFFFF5555.toInt() else 0xFFFFFFFF.toInt()
+            context.text(font, Component.literal(ScreenUtils.truncate(font, displayName, maxTextWidth)), textX, centerY - 9, nameColor, true)
+
+            val description = if (missing) Component.translatable("label.resourcepackprofiles.pack_missing").string else packProfile?.description?.string ?: ""
+            if (description.isNotEmpty()) {
+                val descColor = if (missing) 0xFFFF5555.toInt() else 0xFF808080.toInt()
+                context.text(font, Component.literal(ScreenUtils.truncate(font, description, maxTextWidth)), textX, centerY + 1, descColor, false)
+            }
+        }
     }
 
     private companion object {
