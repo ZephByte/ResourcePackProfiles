@@ -1,0 +1,33 @@
+{
+  "screen.resourcepackprofiles.title": "Resource Pack Profiles",
+  "screen.resourcepackprofiles.edit.title": "Edit Profile",
+  "screen.resourcepackprofiles.missing_packs.title": "Missing Packs",
+
+  "screen.resourcepackprofiles.overwrite.title": "Overwrite Profile",
+  "screen.resourcepackprofiles.overwrite.message": "A profile named '%s' already exists. Overwrite it?",
+  "screen.resourcepackprofiles.load.title": "Load Profile",
+  "screen.resourcepackprofiles.load.message": "Load profile '%s'? This will change your active resource packs.",
+  "screen.resourcepackprofiles.delete.title": "Delete Profile",
+  "screen.resourcepackprofiles.delete.message": "Are you sure you want to delete profile '%s'?",
+
+  "field.resourcepackprofiles.profile_name": "Profile Name",
+  "field.resourcepackprofiles.profile_name.hint": "Profile name...",
+
+  "button.resourcepackprofiles.save_current": "Save Current",
+  "button.resourcepackprofiles.icon": "Icon...",
+
+  "tooltip.resourcepackprofiles.profiles": "Profiles",
+  "tooltip.resourcepackprofiles.import": "Import Profile",
+  "tooltip.resourcepackprofiles.export": "Export Profile",
+  "tooltip.resourcepackprofiles.edit": "Edit Profile",
+  "tooltip.resourcepackprofiles.delete": "Delete Profile",
+  "tooltip.resourcepackprofiles.remove_icon": "Remove Icon",
+
+  "label.resourcepackprofiles.no_profiles": "No profiles saved",
+  "label.resourcepackprofiles.pack_count": "%s packs",
+  "label.resourcepackprofiles.pack_count_missing": "%s packs | %s missing",
+  "label.resourcepackprofiles.available": "Available",
+  "label.resourcepackprofiles.selected": "Selected",
+  "label.resourcepackprofiles.selected_missing": "Selected (%s missing)",
+  "label.resourcepackprofiles.pack_missing": "Missing — pack not found"
+}

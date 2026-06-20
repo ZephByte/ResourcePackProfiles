@@ -2,10 +2,9 @@ package org.zephbyte.resourcepackprofiles.client.profile
 
 import net.minecraft.client.Minecraft
 import com.mojang.blaze3d.platform.NativeImage
-import net.minecraft.client.renderer.texture.DynamicTexture
 import net.minecraft.resources.Identifier
-import org.lwjgl.util.tinyfd.TinyFileDialogs
 import org.slf4j.LoggerFactory
+import org.zephbyte.resourcepackprofiles.client.util.DynamicTextureCache
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Base64
@@ -13,22 +12,12 @@ import java.util.Base64
 object ProfileIconManager {
     private val logger = LoggerFactory.getLogger("ResourcePackProfiles")
     private val iconsDir: Path = Path.of("config", "resourcepackprofiles", "icons")
-    private val cache = mutableMapOf<String, Identifier>()
-    private val registeredTextures = mutableSetOf<Identifier>()
+    private val textures = DynamicTextureCache("profile_icon")
     private const val ICON_SIZE = 64
+    private val UNKNOWN_PACK = Identifier.withDefaultNamespace("textures/misc/unknown_pack.png")
 
-    fun getIconId(profile: ResourcePackProfile): Identifier {
-        cache[profile.name]?.let { return it }
-
-        val image = loadIcon(profile)
-        if (image != null) {
-            val id = registerTexture(profile.name, image)
-            cache[profile.name] = id
-            return id
-        }
-
-        return Identifier.withDefaultNamespace("textures/misc/unknown_pack.png")
-    }
+    fun getIconId(profile: ResourcePackProfile): Identifier =
+        textures.getOrRegister(profile.name, UNKNOWN_PACK) { loadIcon(profile) }
 
     private fun loadIcon(profile: ResourcePackProfile): NativeImage? {
         // Try custom icon first
@@ -37,7 +26,7 @@ object ProfileIconManager {
             if (Files.exists(customPath)) {
                 try {
                     val image = Files.newInputStream(customPath).use { NativeImage.read(it) }
-                    return resizeImage(image, ICON_SIZE, ICON_SIZE)
+                    return resizeToIcon(image)
                 } catch (e: Exception) {
                     logger.error("Failed to load custom icon for '${profile.name}'", e)
                 }
@@ -49,23 +38,13 @@ object ProfileIconManager {
     }
 
     private fun generateCompositeIcon(profile: ResourcePackProfile): NativeImage? {
-        val client = Minecraft.getInstance()
-        val packManager = client.resourcePackRepository
-
         val packIcons = mutableListOf<NativeImage>()
         try {
             for (packId in profile.packIds) {
                 if (!packId.startsWith("file/")) continue
-                val packProfile = packManager.availablePacks.find { it.id == packId } ?: continue
-                try {
-                    val pack = packProfile.open() ?: continue
-                    val iconSupplier = pack.getRootResource("pack.png") ?: continue
-                    val icon = iconSupplier.get().use { NativeImage.read(it) }
-                    packIcons.add(icon)
-                    if (packIcons.size >= 4) break
-                } catch (e: Exception) {
-                    logger.debug("Could not read pack.png for pack '{}'", packId)
-                }
+                val icon = PackIcons.read(packId) ?: continue
+                packIcons.add(icon)
+                if (packIcons.size >= 4) break
             }
         } catch (e: Exception) {
             logger.error("Error generating composite icon", e)
@@ -119,78 +98,39 @@ object ProfileIconManager {
         }
     }
 
-    private fun resizeImage(src: NativeImage, targetW: Int, targetH: Int): NativeImage {
-        if (src.width == targetW && src.height == targetH) return src
-        val resized = NativeImage(targetW, targetH, true)
-        drawScaled(resized, src, 0, 0, targetW, targetH)
+    private fun resizeToIcon(src: NativeImage): NativeImage {
+        if (src.width == ICON_SIZE && src.height == ICON_SIZE) return src
+        val resized = NativeImage(ICON_SIZE, ICON_SIZE, true)
+        drawScaled(resized, src, 0, 0, ICON_SIZE, ICON_SIZE)
         src.close()
         return resized
     }
 
-    private fun registerTexture(profileName: String, image: NativeImage): Identifier {
-        val client = Minecraft.getInstance()
-        val sanitized = profileName.lowercase().replace(Regex("[^a-z0-9_.-]"), "_")
-        val id = Identifier.fromNamespaceAndPath("resourcepackprofiles", "profile_icon/$sanitized")
+    fun invalidate(profileName: String) = textures.invalidate(profileName)
 
-        // Destroy old texture if it exists
-        if (id in registeredTextures) {
-            client.textureManager.release(id)
-        }
+    fun cleanup() = textures.cleanup()
 
-        val texture = DynamicTexture({ "resourcepackprofiles/profile_icon/$sanitized" }, image)
-        client.textureManager.register(id, texture)
-        registeredTextures.add(id)
-        return id
-    }
-
-    fun invalidate(profileName: String) {
-        val id = cache.remove(profileName) ?: return
-        val client = Minecraft.getInstance()
-        client.textureManager.release(id)
-        registeredTextures.remove(id)
-    }
-
-    fun cleanup() {
-        val client = Minecraft.getInstance()
-        for (id in registeredTextures) {
-            client.textureManager.release(id)
-        }
-        registeredTextures.clear()
-        cache.clear()
-    }
+    /**
+     * Builds an auto-composite icon from the given packs, ignoring any custom icon. Used for
+     * previews; the caller owns the returned image. Returns null if no pack icons are available.
+     */
+    fun buildCompositeImage(packIds: List<String>): NativeImage? =
+        generateCompositeIcon(ResourcePackProfile("", packIds))
 
     fun importCustomIcon(profileName: String, sourcePath: Path) {
         Files.createDirectories(iconsDir)
-        val fileName = "${profileName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")}.png"
+        val fileName = "${sanitizeFileName(profileName)}.png"
         val destPath = iconsDir.resolve(fileName)
 
         // Read, resize to 64x64, save as PNG
         val image = Files.newInputStream(sourcePath).use { NativeImage.read(it) }
-        val resized = resizeImage(image, ICON_SIZE, ICON_SIZE)
+        val resized = resizeToIcon(image)
         resized.writeToFile(destPath)
         resized.close()
 
         ProfileManager.setCustomIcon(profileName, fileName)
         // Defer texture invalidation to the render thread
         Minecraft.getInstance().execute { invalidate(profileName) }
-    }
-
-    fun openFilePickerAndImport(profileName: String): Boolean {
-        val path = TinyFileDialogs.tinyfd_openFileDialog(
-            "Select Profile Icon",
-            null,
-            arrayOf("*.png", "*.jpg", "*.jpeg").toFilterBuffer(),
-            "Image Files (*.png, *.jpg)",
-            false
-        ) ?: return false
-
-        try {
-            importCustomIcon(profileName, Path.of(path))
-            return true
-        } catch (e: Exception) {
-            logger.error("Failed to import custom icon", e)
-            return false
-        }
     }
 
     fun deleteCustomIcon(profile: ResourcePackProfile) {
@@ -221,7 +161,7 @@ object ProfileIconManager {
 
     fun importIconFromBase64(profileName: String, base64: String) {
         Files.createDirectories(iconsDir)
-        val fileName = "${profileName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")}.png"
+        val fileName = "${sanitizeFileName(profileName)}.png"
         val destPath = iconsDir.resolve(fileName)
         try {
             val bytes = Base64.getDecoder().decode(base64)
@@ -233,12 +173,7 @@ object ProfileIconManager {
         }
     }
 
-    private fun Array<String>.toFilterBuffer(): org.lwjgl.PointerBuffer {
-        val buf = org.lwjgl.BufferUtils.createPointerBuffer(this.size)
-        for (pattern in this) {
-            buf.put(org.lwjgl.system.MemoryUtil.memUTF8(pattern))
-        }
-        buf.flip()
-        return buf
-    }
+    /** Maps a profile name to a filesystem-safe icon file stem. */
+    fun sanitizeFileName(profileName: String): String =
+        profileName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")
 }

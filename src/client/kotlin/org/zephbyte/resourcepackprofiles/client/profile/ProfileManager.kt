@@ -3,10 +3,8 @@ package org.zephbyte.resourcepackprofiles.client.profile
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import net.minecraft.client.Minecraft
-import org.lwjgl.BufferUtils
-import org.lwjgl.system.MemoryUtil
-import org.lwjgl.util.tinyfd.TinyFileDialogs
 import org.slf4j.LoggerFactory
+import org.zephbyte.resourcepackprofiles.client.util.FileDialogs
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -22,10 +20,23 @@ private data class ExportData(
     val customIcon: String? = null
 )
 
+/** Outcome of importing a profile from a file. */
+sealed interface ImportResult {
+    /** The profile was imported (or overwritten) under [name]. */
+    data class Imported(val name: String) : ImportResult
+    /** A profile named [name] already exists; importing would overwrite it. */
+    data class Conflict(val name: String) : ImportResult
+    /** The file could not be read or parsed. */
+    data object Failed : ImportResult
+}
+
 object ProfileManager {
     private val logger = LoggerFactory.getLogger("ResourcePackProfiles")
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
     private val configPath: Path = Path.of("config", "resourcepackprofiles.json")
+    private val iconsDir: Path = Path.of("config", "resourcepackprofiles", "icons")
+    private val profileFilters = arrayOf("*.rpprofile")
+    private const val PROFILE_FILTER_DESC = "Resource Pack Profile (*.rpprofile)"
     private val profiles = mutableMapOf<String, ResourcePackProfile>()
     private var lastActiveProfileName: String? = null
 
@@ -46,9 +57,13 @@ object ProfileManager {
     }
 
     private fun save() {
-        Files.createDirectories(configPath.parent)
-        val config = ConfigData(profiles.values.toList(), lastActiveProfileName)
-        Files.writeString(configPath, gson.toJson(config))
+        try {
+            Files.createDirectories(configPath.parent)
+            val config = ConfigData(profiles.values.toList(), lastActiveProfileName)
+            Files.writeString(configPath, gson.toJson(config))
+        } catch (e: Exception) {
+            logger.error("Failed to save profiles config", e)
+        }
     }
 
     fun hasProfile(name: String): Boolean = name in profiles
@@ -66,7 +81,7 @@ object ProfileManager {
     fun saveCurrentAsProfile(name: String) {
         val client = Minecraft.getInstance()
         val userPacks = getUserPacks(client.options.resourcePacks.toList())
-        logger.info("Saving profile '{}' with {} user packs: {}", name, userPacks.size, userPacks)
+        logger.debug("Saving profile '{}' with {} user packs: {}", name, userPacks.size, userPacks)
 
         val existing = profiles[name]
         profiles[name] = ResourcePackProfile(name, userPacks, existing?.customIcon, existing?.favorite ?: false)
@@ -100,10 +115,9 @@ object ProfileManager {
 
         // Rename custom icon file on disk if it exists
         if (profile.customIcon != null) {
-            val iconsDir = Path.of("config", "resourcepackprofiles", "icons")
             val oldPath = iconsDir.resolve(profile.customIcon)
             if (Files.exists(oldPath)) {
-                val newFileName = "${newName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")}.png"
+                val newFileName = "${ProfileIconManager.sanitizeFileName(newName)}.png"
                 val newPath = iconsDir.resolve(newFileName)
                 try {
                     Files.move(oldPath, newPath)
@@ -145,19 +159,11 @@ object ProfileManager {
     }
 
     fun exportProfile(profile: ResourcePackProfile): Boolean {
-        val filterPatterns = arrayOf("*.rpprofile")
-        val filterBuf = BufferUtils.createPointerBuffer(filterPatterns.size)
-        for (pattern in filterPatterns) {
-            filterBuf.put(MemoryUtil.memUTF8(pattern))
-        }
-        filterBuf.flip()
-
-        val defaultName = "${profile.name}.rpprofile"
-        val path = TinyFileDialogs.tinyfd_saveFileDialog(
+        val path = FileDialogs.saveFile(
             "Export Profile",
-            defaultName,
-            filterBuf,
-            "Resource Pack Profile (*.rpprofile)"
+            "${profile.name}.rpprofile",
+            profileFilters,
+            PROFILE_FILTER_DESC
         ) ?: return false
 
         return try {
@@ -177,31 +183,16 @@ object ProfileManager {
         }
     }
 
+    /** Opens a file dialog and imports the selected profile. Blocks, so call off the render thread. */
+    fun pickProfileToImport(): String? =
+        FileDialogs.openFile("Import Profile", profileFilters, PROFILE_FILTER_DESC)
+
     /**
-     * Opens a file dialog to import a profile. Returns the imported profile name,
-     * or null if cancelled/failed. If overwriteConfirmed is false and a profile
-     * with the same name exists, returns the conflicting name prefixed with "!".
+     * Imports a profile from [filePath]. If [overwriteName] is null and a profile with the file's
+     * name already exists, returns [ImportResult.Conflict] without writing anything; pass the name
+     * back as [overwriteName] to confirm the overwrite.
      */
-    fun importProfile(overwriteName: String? = null): String? {
-        val filterPatterns = arrayOf("*.rpprofile")
-        val filterBuf = BufferUtils.createPointerBuffer(filterPatterns.size)
-        for (pattern in filterPatterns) {
-            filterBuf.put(MemoryUtil.memUTF8(pattern))
-        }
-        filterBuf.flip()
-
-        val path = TinyFileDialogs.tinyfd_openFileDialog(
-            "Import Profile",
-            null,
-            filterBuf,
-            "Resource Pack Profile (*.rpprofile)",
-            false
-        ) ?: return null
-
-        return importProfileFromPath(Path.of(path), overwriteName)
-    }
-
-    fun importProfileFromPath(filePath: Path, overwriteName: String? = null): String? {
+    fun importProfileFromPath(filePath: Path, overwriteName: String? = null): ImportResult {
         return try {
             val json = Files.readString(filePath)
             val data: ExportData = gson.fromJson(json, ExportData::class.java)
@@ -209,15 +200,12 @@ object ProfileManager {
 
             // Check for existing profile if not an overwrite
             if (overwriteName == null && hasProfile(name)) {
-                return "!$name"
+                return ImportResult.Conflict(name)
             }
 
             // If overwriting, delete old icon first
             if (overwriteName != null) {
-                val existing = profiles[name]
-                if (existing != null) {
-                    ProfileIconManager.deleteCustomIcon(existing)
-                }
+                profiles[name]?.let { ProfileIconManager.deleteCustomIcon(it) }
             }
 
             profiles[name] = ResourcePackProfile(
@@ -234,22 +222,20 @@ object ProfileManager {
             save()
             ProfileIconManager.invalidate(name)
             logger.info("Imported profile '{}' with {} packs", name, data.packIds.size)
-            name
+            ImportResult.Imported(name)
         } catch (e: Exception) {
             logger.error("Failed to import profile", e)
-            null
+            ImportResult.Failed
         }
     }
 
     fun applyProfile(profile: ResourcePackProfile): List<String> {
         val client = Minecraft.getInstance()
         val availableIds = client.resourcePackRepository.availablePacks.map { it.id }.toSet()
-        logger.info("Available pack IDs: {}", availableIds)
-        logger.info("Profile '{}' wants pack IDs: {}", profile.name, profile.packIds)
 
         val missingIds = profile.packIds.filter { it !in availableIds }
         if (missingIds.isNotEmpty()) {
-            logger.warn("Missing packs: {}", missingIds)
+            logger.warn("Profile '{}' is missing packs: {}", profile.name, missingIds)
         }
 
         val validUserPacks = profile.packIds.filter { it in availableIds }
@@ -257,19 +243,14 @@ object ProfileManager {
         // Preserve built-in/required packs that are always present
         val builtinPacks = client.options.resourcePacks.filter { it !in getUserPacks(client.options.resourcePacks.toList()) }
         val fullPackList = builtinPacks + validUserPacks
-        logger.info("Valid user packs: {}, built-in packs preserved: {}", validUserPacks, builtinPacks)
+        logger.debug("Applying profile '{}': valid user packs {}, built-in preserved {}", profile.name, validUserPacks, builtinPacks)
 
-        logger.info("options.resourcePacks BEFORE: {}", client.options.resourcePacks.toList())
         client.options.resourcePacks.clear()
         client.options.resourcePacks.addAll(fullPackList)
-        logger.info("options.resourcePacks AFTER: {}", client.options.resourcePacks.toList())
 
         client.options.save()
         client.resourcePackRepository.reload()
         client.resourcePackRepository.setSelected(fullPackList)
-
-        val enabledAfter = client.resourcePackRepository.selectedPacks.map { it.id }
-        logger.info("resourcePackRepository.selectedPacks AFTER setSelected: {}", enabledAfter)
 
         client.reloadResourcePacks()
         lastActiveProfileName = profile.name

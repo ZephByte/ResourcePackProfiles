@@ -1,29 +1,44 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
+import com.mojang.blaze3d.platform.NativeImage
+import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.input.MouseButtonEvent
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.screens.Screen
 import net.minecraft.client.gui.components.Button
 import net.minecraft.client.gui.components.EditBox
-import com.mojang.blaze3d.platform.NativeImage
-import net.minecraft.client.renderer.texture.DynamicTexture
+import net.minecraft.client.gui.components.Tooltip
 import net.minecraft.server.packs.repository.Pack
+import net.minecraft.network.chat.CommonComponents
 import net.minecraft.network.chat.Component
 import net.minecraft.resources.Identifier
+import org.slf4j.LoggerFactory
+import org.zephbyte.resourcepackprofiles.client.profile.PackIcons
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileIconManager
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
+import org.zephbyte.resourcepackprofiles.client.util.DynamicTextureCache
+import org.zephbyte.resourcepackprofiles.client.util.FileDialogs
+import org.zephbyte.resourcepackprofiles.client.util.ScreenUtils
+import java.nio.file.Files
+import java.nio.file.Path
 
 class EditProfileScreen(
     private val parent: ProfileScreen,
     private val originalName: String
-) : Screen(Component.literal("Edit Profile")) {
+) : Screen(Component.translatable("screen.resourcepackprofiles.edit.title")) {
+
+    private val logger = LoggerFactory.getLogger("ResourcePackProfiles")
 
     private lateinit var nameField: EditBox
 
     // Editing state — pack IDs
     private var selectedPacks = mutableListOf<String>()
     private var availablePacks = mutableListOf<String>()
+
+    // Staged icon changes — applied on Done, discarded on Cancel (consistent with name/pack edits)
+    private var pendingIconPath: Path? = null
+    private var pendingIconRemove = false
 
     // Scroll state (pixel-based for smooth scrolling)
     private var availableScrollY = 0.0
@@ -46,11 +61,11 @@ class EditProfileScreen(
     private val MOVE_UP = Identifier.withDefaultNamespace("transferable_list/move_up")
     private val MOVE_DOWN_HIGHLIGHTED = Identifier.withDefaultNamespace("transferable_list/move_down_highlighted")
     private val MOVE_DOWN = Identifier.withDefaultNamespace("transferable_list/move_down")
-    private val ARROW_SIZE = 32
+    private val UNKNOWN_PACK = Identifier.withDefaultNamespace("textures/misc/unknown_pack.png")
 
-    // Pack icon cache
-    private val packIconCache = mutableMapOf<String, Identifier>()
-    private val registeredPackTextures = mutableSetOf<Identifier>()
+    // Texture caches: per-pack list icons, and the staged-icon preview shown next to the name field.
+    private val packTextures = DynamicTextureCache("edit_pack_icon")
+    private val previewTextures = DynamicTextureCache("edit_icon_preview")
 
     override fun init() {
         listBottom = height - 56
@@ -65,37 +80,46 @@ class EditProfileScreen(
         val centerX = width / 2
 
         // Name field at top
-        nameField = EditBox(font, centerX - 100, 16, 200, 20, Component.literal("Profile Name"))
+        nameField = EditBox(font, centerX - 100, 16, 200, 20, Component.translatable("field.resourcepackprofiles.profile_name"))
         nameField.setMaxLength(64)
         nameField.value = originalName
         addRenderableWidget(nameField)
 
-        // Change Icon button
-        addRenderableWidget(Button.builder(Component.literal("Icon...")) {
+        // Change Icon button (stages a chosen file; applied on Done)
+        addRenderableWidget(Button.builder(Component.translatable("button.resourcepackprofiles.icon")) {
             Thread {
-                ProfileIconManager.openFilePickerAndImport(originalName)
+                val path = FileDialogs.openFile(
+                    "Select Profile Icon",
+                    arrayOf("*.png", "*.jpg", "*.jpeg"),
+                    "Image Files (*.png, *.jpg)"
+                ) ?: return@Thread
+                Minecraft.getInstance().execute {
+                    pendingIconPath = Path.of(path)
+                    pendingIconRemove = false
+                    previewTextures.invalidate(PREVIEW_KEY)
+                }
             }.start()
         }.bounds(centerX + 104, 16, 40, 20).build())
 
-        // Remove Icon button
+        // Remove Icon button (stages removal; applied on Done)
         addRenderableWidget(Button.builder(Component.literal("✕")) {
-            ProfileIconManager.deleteCustomIcon(
-                ProfileManager.getProfiles().find { it.name == originalName } ?: return@builder
-            )
-            ProfileManager.setCustomIcon(originalName, null)
-            ProfileIconManager.invalidate(originalName)
-        }.bounds(centerX + 148, 16, 20, 20).build())
+            pendingIconRemove = true
+            pendingIconPath = null
+            previewTextures.invalidate(PREVIEW_KEY)
+        }.bounds(centerX + 148, 16, 20, 20)
+            .tooltip(Tooltip.create(Component.translatable("tooltip.resourcepackprofiles.remove_icon")))
+            .build())
 
         // Save & Cancel at bottom
-        addRenderableWidget(Button.builder(Component.literal("Done")) { onSave() }
+        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE) { onSave() }
             .bounds(centerX - 104, height - 28, 100, 20).build())
-        addRenderableWidget(Button.builder(Component.literal("Cancel")) { onClose() }
+        addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL) { onClose() }
             .bounds(centerX + 4, height - 28, 100, 20).build())
 
         // Export button — trails the Done/Cancel row (blank label, icon drawn in render)
         addRenderableWidget(Button.builder(Component.literal(" ")) { onExport() }
             .bounds(centerX + 108, height - 28, 20, 20)
-            .tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal("Export Profile")))
+            .tooltip(Tooltip.create(Component.translatable("tooltip.resourcepackprofiles.export")))
             .build())
     }
 
@@ -112,58 +136,37 @@ class EditProfileScreen(
             .toMutableList()
     }
 
-    private fun isPackMissing(packId: String): Boolean {
-        return packId !in allKnownPackIds
-    }
+    private fun isPackMissing(packId: String): Boolean = packId !in allKnownPackIds
 
     private fun resolvePackProfile(packId: String): Pack? {
         val client = minecraft ?: return null
         return client.resourcePackRepository.availablePacks.find { it.id == packId }
     }
 
-    private fun getPackIconId(packId: String): Identifier {
-        packIconCache[packId]?.let { return it }
+    private fun getPackIconId(packId: String): Identifier =
+        packTextures.getOrRegister(packId, UNKNOWN_PACK) { PackIcons.read(packId) }
 
-        val packProfile = resolvePackProfile(packId)
-        if (packProfile != null) {
-            try {
-                val pack = packProfile.open()
-                if (pack != null) {
-                    val iconSupplier = pack.getRootResource("pack.png")
-                    if (iconSupplier != null) {
-                        val image = iconSupplier.get().use { NativeImage.read(it) }
-                        val id = registerPackTexture(packId, image)
-                        packIconCache[packId] = id
-                        return id
-                    }
+    /** Texture id for the profile-icon preview, reflecting any staged icon change. */
+    private fun previewIconId(profile: org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile): Identifier {
+        return when {
+            pendingIconPath != null -> previewTextures.getOrRegister(PREVIEW_KEY, UNKNOWN_PACK) {
+                try {
+                    Files.newInputStream(pendingIconPath!!).use { NativeImage.read(it) }
+                } catch (e: Exception) {
+                    logger.error("Failed to read staged icon preview", e)
+                    null
                 }
-            } catch (_: Exception) {
             }
+            pendingIconRemove -> previewTextures.getOrRegister(PREVIEW_KEY, UNKNOWN_PACK) {
+                ProfileIconManager.buildCompositeImage(selectedPacks.reversed())
+            }
+            else -> ProfileIconManager.getIconId(profile)
         }
-
-        return Identifier.withDefaultNamespace("textures/misc/unknown_pack.png")
-    }
-
-    private fun registerPackTexture(packId: String, image: NativeImage): Identifier {
-        val client = minecraft ?: return Identifier.withDefaultNamespace("textures/misc/unknown_pack.png")
-        val sanitized = packId.lowercase().replace(Regex("[^a-z0-9_.-/]"), "_")
-        val id = Identifier.fromNamespaceAndPath("resourcepackprofiles", "edit_pack_icon/$sanitized")
-
-        if (id in registeredPackTextures) {
-            client.textureManager.release(id)
-        }
-
-        val texture = DynamicTexture({ "resourcepackprofiles/edit_pack_icon/$sanitized" }, image)
-        client.textureManager.register(id, texture)
-        registeredPackTextures.add(id)
-        return id
     }
 
     private fun onExport() {
         val profile = ProfileManager.getProfiles().find { it.name == originalName } ?: return
-        Thread {
-            ProfileManager.exportProfile(profile)
-        }.start()
+        Thread { ProfileManager.exportProfile(profile) }.start()
     }
 
     private fun onSave() {
@@ -171,29 +174,36 @@ class EditProfileScreen(
         if (newName.isEmpty()) return
 
         val packsToSave = selectedPacks.reversed()
+        val finalName: String
         if (newName != originalName) {
             if (!ProfileManager.renameProfile(originalName, newName)) return
             ProfileManager.updateProfile(newName, packsToSave)
+            finalName = newName
         } else {
             ProfileManager.updateProfile(originalName, packsToSave)
+            finalName = originalName
         }
 
+        applyStagedIcon(finalName)
         onClose()
     }
 
-    private fun drawExportIcon(context: GuiGraphicsExtractor, bx: Int, by: Int) {
-        val white = 0xFFFFFFFF.toInt()
-        // Box: open-top rectangle (bottom + left + right sides)
-        context.fill(bx + 4, by + 15, bx + 16, by + 16, white)  // bottom
-        context.fill(bx + 4, by + 10, bx + 5, by + 16, white)   // left
-        context.fill(bx + 15, by + 10, bx + 16, by + 16, white) // right
-        // Arrow shaft: vertical line going up from box
-        context.fill(bx + 9, by + 5, bx + 11, by + 13, white)
-        // Arrow head: chevron
-        context.fill(bx + 7, by + 7, bx + 9, by + 8, white)     // left wing
-        context.fill(bx + 11, by + 7, bx + 13, by + 8, white)   // right wing
-        context.fill(bx + 8, by + 6, bx + 9, by + 7, white)     // left tip
-        context.fill(bx + 11, by + 6, bx + 12, by + 7, white)   // right tip
+    /** Commits any staged icon change to the saved profile. */
+    private fun applyStagedIcon(profileName: String) {
+        try {
+            when {
+                pendingIconPath != null -> ProfileIconManager.importCustomIcon(profileName, pendingIconPath!!)
+                pendingIconRemove -> {
+                    ProfileManager.getProfiles().find { it.name == profileName }?.let {
+                        ProfileIconManager.deleteCustomIcon(it)
+                    }
+                    ProfileManager.setCustomIcon(profileName, null)
+                    ProfileIconManager.invalidate(profileName)
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to apply staged icon for '$profileName'", e)
+        }
     }
 
     override fun extractRenderState(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
@@ -202,15 +212,13 @@ class EditProfileScreen(
         val centerX = width / 2
 
         // Draw export icon on the export button
-        drawExportIcon(context, centerX + 108, height - 28)
+        ScreenUtils.drawTransferIcon(context, centerX + 108, height - 28, into = false)
 
-        // Draw current profile icon next to the name field
+        // Draw current profile icon next to the name field (reflects staged changes)
         val profile = ProfileManager.getProfiles().find { it.name == originalName }
         if (profile != null) {
-            val iconId = ProfileIconManager.getIconId(profile)
-            val iconX = centerX - 124
-            val iconY = 16
-            context.blit(RenderPipelines.GUI_TEXTURED, iconId, iconX, iconY, 0f, 0f, 20, 20, 20, 20)
+            val iconId = previewIconId(profile)
+            context.blit(RenderPipelines.GUI_TEXTURED, iconId, centerX - 124, 16, 0f, 0f, 20, 20, 20, 20)
         }
         val columnWidth = centerX - 12
         val leftX = 4
@@ -218,11 +226,14 @@ class EditProfileScreen(
         val listHeight = listBottom - listTop
 
         // Column headers
-        context.centeredText(font, Component.literal("Available"), leftX + columnWidth / 2, listTop - 10, 0xAAAAAA or (0xFF shl 24))
+        context.centeredText(font, Component.translatable("label.resourcepackprofiles.available"), leftX + columnWidth / 2, listTop - 10, 0xFFAAAAAA.toInt())
         val missingCount = selectedPacks.count { isPackMissing(it) }
-        val selectedHeader = if (missingCount > 0) "Selected ($missingCount missing)" else "Selected"
-        val selectedHeaderColor = if (missingCount > 0) 0xFF5555 or (0xFF shl 24) else 0xAAAAAA or (0xFF shl 24)
-        context.centeredText(font, Component.literal(selectedHeader), rightX + columnWidth / 2, listTop - 10, selectedHeaderColor)
+        val selectedHeader = if (missingCount > 0)
+            Component.translatable("label.resourcepackprofiles.selected_missing", missingCount)
+        else
+            Component.translatable("label.resourcepackprofiles.selected")
+        val selectedHeaderColor = if (missingCount > 0) 0xFFFF5555.toInt() else 0xFFAAAAAA.toInt()
+        context.centeredText(font, selectedHeader, rightX + columnWidth / 2, listTop - 10, selectedHeaderColor)
 
         // Draw list backgrounds
         context.fill(leftX, listTop, leftX + columnWidth, listBottom, 0x80000000.toInt())
@@ -246,10 +257,10 @@ class EditProfileScreen(
 
         // Draw scrollbar indicators
         if (availablePacks.size * entryHeight > listHeight) {
-            drawScrollbar(context, leftX + columnWidth - 4, listTop, listHeight, availableScrollY, maxAvailScroll)
+            drawScrollbar(context, leftX + columnWidth - 4, listHeight, availableScrollY, maxAvailScroll)
         }
         if (selectedPacks.size * entryHeight > listHeight) {
-            drawScrollbar(context, rightX + columnWidth - 4, listTop, listHeight, selectedScrollY, maxSelScroll)
+            drawScrollbar(context, rightX + columnWidth - 4, listHeight, selectedScrollY, maxSelScroll)
         }
     }
 
@@ -309,24 +320,15 @@ class EditProfileScreen(
             val displayName = packProfile?.title?.string ?: packId
             val textX = x + listPadding + packIconSize + 4
             val maxTextWidth = columnWidth - packIconSize - listPadding * 2 - 4
-            val nameColor = if (missing) 0xFF5555 or (0xFF shl 24) else 0xFFFFFF or (0xFF shl 24)
-            context.text(font, Component.literal(truncateText(displayName, maxTextWidth)), textX, entryY + 4, nameColor, true)
+            val nameColor = if (missing) 0xFFFF5555.toInt() else 0xFFFFFFFF.toInt()
+            context.text(font, Component.literal(ScreenUtils.truncate(font, displayName, maxTextWidth)), textX, entryY + 4, nameColor, true)
 
-            val description = if (missing) "Missing — pack not found" else packProfile?.description?.string ?: ""
+            val description = if (missing) Component.translatable("label.resourcepackprofiles.pack_missing").string else packProfile?.description?.string ?: ""
             if (description.isNotEmpty()) {
-                val descColor = if (missing) 0xFF5555 or (0xFF shl 24) else 0x808080 or (0xFF shl 24)
-                context.text(font, Component.literal(truncateText(description, maxTextWidth)), textX, entryY + 16, descColor, false)
+                val descColor = if (missing) 0xFFFF5555.toInt() else 0xFF808080.toInt()
+                context.text(font, Component.literal(ScreenUtils.truncate(font, description, maxTextWidth)), textX, entryY + 16, descColor, false)
             }
         }
-    }
-
-    private fun truncateText(text: String, maxWidth: Int): String {
-        if (font.width(text) <= maxWidth) return text
-        var s = text
-        while (font.width("$s...") > maxWidth && s.isNotEmpty()) {
-            s = s.dropLast(1)
-        }
-        return "$s..."
     }
 
     private enum class ArrowRegion { NONE, UNSELECT, MOVE_UP, MOVE_DOWN }
@@ -349,10 +351,10 @@ class EditProfileScreen(
         }
     }
 
-    private fun drawScrollbar(context: GuiGraphicsExtractor, x: Int, top: Int, height: Int, scrollPos: Double, maxScroll: Int) {
+    private fun drawScrollbar(context: GuiGraphicsExtractor, x: Int, height: Int, scrollPos: Double, maxScroll: Int) {
         if (maxScroll <= 0) return
         val barHeight = (height.toDouble() * height / (height + maxScroll)).toInt().coerceAtLeast(8)
-        val barY = top + ((height - barHeight) * (scrollPos / maxScroll)).toInt()
+        val barY = listTop + ((height - barHeight) * (scrollPos / maxScroll)).toInt()
         context.fill(x, barY, x + 3, barY + barHeight, 0x80FFFFFF.toInt())
     }
 
@@ -377,6 +379,7 @@ class EditProfileScreen(
                     if (mx >= iconX && mx < iconX + packIconSize && my >= iconY && my < iconY + packIconSize) {
                         selectedPacks.add(availablePacks[index])
                         recomputeAvailable()
+                        onSelectedPacksChanged()
                         return true
                     }
                 }
@@ -395,20 +398,15 @@ class EditProfileScreen(
                         ArrowRegion.UNSELECT -> {
                             selectedPacks.removeAt(index)
                             recomputeAvailable()
+                            onSelectedPacksChanged()
                         }
-                        ArrowRegion.MOVE_UP -> {
-                            if (index > 0) {
-                                val tmp = selectedPacks[index]
-                                selectedPacks[index] = selectedPacks[index - 1]
-                                selectedPacks[index - 1] = tmp
-                            }
+                        ArrowRegion.MOVE_UP -> if (index > 0) {
+                            selectedPacks[index] = selectedPacks.set(index - 1, selectedPacks[index])
+                            onSelectedPacksChanged()
                         }
-                        ArrowRegion.MOVE_DOWN -> {
-                            if (index < selectedPacks.size - 1) {
-                                val tmp = selectedPacks[index]
-                                selectedPacks[index] = selectedPacks[index + 1]
-                                selectedPacks[index + 1] = tmp
-                            }
+                        ArrowRegion.MOVE_DOWN -> if (index < selectedPacks.size - 1) {
+                            selectedPacks[index] = selectedPacks.set(index + 1, selectedPacks[index])
+                            onSelectedPacksChanged()
                         }
                         ArrowRegion.NONE -> {}
                     }
@@ -420,35 +418,31 @@ class EditProfileScreen(
         return super.mouseClicked(click, doubled)
     }
 
+    /** Keeps the staged remove-icon composite preview in sync with the current pack selection. */
+    private fun onSelectedPacksChanged() {
+        if (pendingIconRemove) previewTextures.invalidate(PREVIEW_KEY)
+    }
+
     override fun mouseScrolled(mouseX: Double, mouseY: Double, horizontalAmount: Double, verticalAmount: Double): Boolean {
         if (mouseY >= listTop && mouseY < listBottom) {
             val centerX = width / 2
-
             if (mouseX < centerX) {
-                availableScrollY = (availableScrollY - verticalAmount * scrollSpeed)
-                    .coerceAtLeast(0.0)
-                return true
+                availableScrollY = (availableScrollY - verticalAmount * scrollSpeed).coerceAtLeast(0.0)
             } else {
-                selectedScrollY = (selectedScrollY - verticalAmount * scrollSpeed)
-                    .coerceAtLeast(0.0)
-                return true
+                selectedScrollY = (selectedScrollY - verticalAmount * scrollSpeed).coerceAtLeast(0.0)
             }
+            return true
         }
-
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount)
     }
 
     override fun onClose() {
-        // Clean up registered pack textures
-        val client = minecraft
-        if (client != null) {
-            for (id in registeredPackTextures) {
-                client.textureManager.release(id)
-            }
-        }
-        registeredPackTextures.clear()
-        packIconCache.clear()
-
+        packTextures.cleanup()
+        previewTextures.cleanup()
         minecraft?.setScreen(parent)
+    }
+
+    private companion object {
+        const val PREVIEW_KEY = "staged"
     }
 }

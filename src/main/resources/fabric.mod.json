@@ -10,21 +10,14 @@
   "icon": "assets/resourcepackprofiles/icon.png",
   "environment": "client",
   "entrypoints": {
-    "fabric-datagen": [
-      "org.zephbyte.resourcepackprofiles.client.ResourcepackprofilesDataGenerator"
-    ],
     "client": [
       "org.zephbyte.resourcepackprofiles.client.ResourcepackprofilesClient"
-    ],
-    "main": [
-      "org.zephbyte.resourcepackprofiles.Resourcepackprofiles"
     ],
     "modmenu": [
       "org.zephbyte.resourcepackprofiles.client.ModMenuIntegration"
     ]
   },
   "mixins": [
-    "resourcepackprofiles.mixins.json",
     {
       "config": "resourcepackprofiles.client.mixins.json",
       "environment": "client"
