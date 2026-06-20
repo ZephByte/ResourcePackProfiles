@@ -69,7 +69,43 @@ object ProfileManager {
     fun hasProfile(name: String): Boolean = name in profiles
 
     fun getProfiles(): List<ResourcePackProfile> {
-        return profiles.values.sortedWith(compareByDescending<ResourcePackProfile> { it.favorite }.thenBy { it.name.lowercase() })
+        return profiles.values.sortedWith(
+            compareByDescending<ResourcePackProfile> { it.favorite }
+                .thenComparator { a, b -> naturalCompare(a.name, b.name) }
+        )
+    }
+
+    /**
+     * Case-insensitive comparison that orders embedded numbers by value rather than lexically,
+     * so e.g. "t9" sorts before "t10".
+     */
+    private fun naturalCompare(s1: String, s2: String): Int {
+        val a = s1.lowercase()
+        val b = s2.lowercase()
+        var i = 0
+        var j = 0
+        while (i < a.length && j < b.length) {
+            val ca = a[i]
+            val cb = b[j]
+            if (ca.isDigit() && cb.isDigit()) {
+                var ni = i
+                while (ni < a.length && a[ni].isDigit()) ni++
+                var nj = j
+                while (nj < b.length && b[nj].isDigit()) nj++
+                val na = a.substring(i, ni).trimStart('0')
+                val nb = b.substring(j, nj).trimStart('0')
+                if (na.length != nb.length) return na.length - nb.length
+                val cmp = na.compareTo(nb)
+                if (cmp != 0) return cmp
+                i = ni
+                j = nj
+            } else {
+                if (ca != cb) return ca.code - cb.code
+                i++
+                j++
+            }
+        }
+        return (a.length - i) - (b.length - j)
     }
 
     fun toggleFavorite(name: String) {

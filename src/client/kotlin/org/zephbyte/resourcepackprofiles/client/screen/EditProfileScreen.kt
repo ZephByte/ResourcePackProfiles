@@ -126,10 +126,9 @@ class EditProfileScreen(
     private var allKnownPackIds = setOf<String>()
 
     private fun recomputeAvailable() {
-        val client = minecraft ?: return
-        allKnownPackIds = client.resourcePackRepository.availablePacks.map { it.id }.toSet()
+        allKnownPackIds = minecraft.resourcePackRepository.availablePacks.map { it.id }.toSet()
         val currentSet = selectedPacks.toSet()
-        availablePacks = client.resourcePackRepository.availablePacks
+        availablePacks = minecraft.resourcePackRepository.availablePacks
             .filter { it.packSource.shouldAddAutomatically() && !it.isRequired }
             .map { it.id }
             .filter { it !in currentSet }
@@ -439,7 +438,7 @@ class EditProfileScreen(
     override fun onClose() {
         packTextures.cleanup()
         previewTextures.cleanup()
-        minecraft?.setScreen(parent)
+        minecraft.setScreen(parent)
     }
 
     private companion object {

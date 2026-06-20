@@ -19,6 +19,7 @@
   "tooltip.resourcepackprofiles.profiles": "Profiles",
   "tooltip.resourcepackprofiles.import": "Import Profile",
   "tooltip.resourcepackprofiles.export": "Export Profile",
+  "tooltip.resourcepackprofiles.favorite": "Toggle Favorite",
   "tooltip.resourcepackprofiles.edit": "Edit Profile",
   "tooltip.resourcepackprofiles.delete": "Delete Profile",
   "tooltip.resourcepackprofiles.remove_icon": "Remove Icon",

@@ -17,7 +17,7 @@ class MissingPacksScreen(
 
     override fun init() {
         addRenderableWidget(
-            Button.builder(CommonComponents.GUI_DONE) { minecraft?.setScreen(parent) }
+            Button.builder(CommonComponents.GUI_DONE) { minecraft.setScreen(parent) }
                 .bounds(width / 2 - 50, height / 2 + 40, 100, 20)
                 .build()
         )
@@ -32,6 +32,6 @@ class MissingPacksScreen(
     }
 
     override fun onClose() {
-        minecraft?.setScreen(parent)
+        minecraft.setScreen(parent)
     }
 }
