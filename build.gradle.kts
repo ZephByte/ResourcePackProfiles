@@ -45,8 +45,7 @@ dependencies {
     implementation("net.fabricmc:fabric-language-kotlin:${project.property("kotlin_loader_version")}")
 
     implementation("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_version")}")
-    // ModMenu 18.0.0-beta.1 targets 26.1.x; alpha builds target 1.21.x and 19.x+ require MC >=26.2.
-    implementation("com.terraformersmc:modmenu:18.0.0-beta.1")
+    implementation("com.terraformersmc:modmenu:20.0.0-beta.3")
 }
 
 tasks.processResources {
