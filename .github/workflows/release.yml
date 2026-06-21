@@ -56,8 +56,9 @@ jobs:
           files: ${{ steps.jar.outputs.path }}
           prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
 
-      - name: Publish to Modrinth
-        run: ./gradlew modrinth
+      - name: Publish to Modrinth and CurseForge
+        run: ./gradlew publishMods
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
           CHANGELOG: ${{ steps.changelog.outputs.content }}
