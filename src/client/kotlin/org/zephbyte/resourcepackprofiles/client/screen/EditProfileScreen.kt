@@ -326,7 +326,7 @@ class EditProfileScreen(
     override fun onClose() {
         packTextures.cleanup()
         previewTextures.cleanup()
-        minecraft.setScreen(parent)
+        minecraft.setScreenAndShow(parent)
     }
 
     /** One pack column. [isSelectedList] toggles add-vs-reorder behaviour and the hover affordance. */

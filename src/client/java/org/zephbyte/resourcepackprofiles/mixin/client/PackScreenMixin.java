@@ -38,7 +38,7 @@ public abstract class PackScreenMixin extends Screen implements RefreshablePackS
     private void addProfilesButton(CallbackInfo ci) {
         ProfileButton button = new ProfileButton(rpp_profilesButtonX(), this.doneButton.getY(), 20, 20,
                 Component.translatable("tooltip.resourcepackprofiles.profiles"),
-                _ -> this.minecraft.setScreen(new ProfileScreen((PackSelectionScreen) (Object) this)));
+                _ -> this.minecraft.setScreenAndShow(new ProfileScreen((PackSelectionScreen) (Object) this)));
         button.setTooltip(Tooltip.create(Component.translatable("tooltip.resourcepackprofiles.profiles")));
         this.rpp_profilesButton = button;
         this.addRenderableWidget(button);
