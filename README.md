@@ -1,9 +1,10 @@
 # Resource Pack Profiles
 
 [![GitHub release](https://img.shields.io/github/v/release/ZephByte/ResourcePackProfiles?include_prereleases&label=release&color=blue)](https://github.com/ZephByte/ResourcePackProfiles/releases/latest)
-[![Modrinth](https://img.shields.io/modrinth/v/resource-pack-profiles?label=modrinth&logo=modrinth&color=00AF5C)](https://modrinth.com/mod/resource-pack-profiles)
-[![License: MIT](https://img.shields.io/github/license/ZephByte/ResourcePackProfiles)](LICENSE)
 [![Fabric](https://img.shields.io/badge/mod%20loader-fabric-blue)](https://fabricmc.net/)
+[![Modrinth](https://img.shields.io/modrinth/v/resource-pack-profiles?label=modrinth&logo=modrinth&color=00AF5C)](https://modrinth.com/mod/resource-pack-profiles)
+[![CurseForge](https://img.shields.io/curseforge/v/1583478?label=curseforge&logo=curseforge&color=F16436)](https://www.curseforge.com/minecraft/mc-mods/resource-pack-profiles)
+[![License: MIT](https://img.shields.io/github/license/ZephByte/ResourcePackProfiles)](LICENSE)
 
 A lightweight **client-side Fabric mod** that lets you save, manage, and share named **resource pack load order profiles** — switch between completely different pack setups in seconds, right from the resource pack screen.
 
