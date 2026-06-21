@@ -1,54 +1,65 @@
 # Resource Pack Profiles
 
-A lightweight **client-side Fabric mod** that lets you save, manage, and share named **resource pack load order profiles** — switch between completely different pack setups in seconds.
+[![GitHub release](https://img.shields.io/github/v/release/ZephByte/ResourcePackProfiles?label=release&color=blue)](https://github.com/ZephByte/ResourcePackProfiles/releases/latest)
+[![Modrinth](https://img.shields.io/modrinth/v/resource-pack-profiles?label=modrinth&logo=modrinth&color=00AF5C)](https://modrinth.com/mod/resource-pack-profiles)
+[![License: MIT](https://img.shields.io/github/license/ZephByte/ResourcePackProfiles)](LICENSE)
+[![Fabric](https://img.shields.io/badge/mod%20loader-fabric-blue)](https://fabricmc.net/)
 
-Just drop it into your `.minecraft/mods` folder and access it from the resource pack screen.
-
----
-
-## 🔧 Features
-
-- 💾 **Profile Saving:** Snapshot your current resource pack load order as a named profile with a single click.
-- 📂 **Instant Loading:** Apply any saved profile and have your packs reload automatically — no restarts needed.
-- ✏️ **Profile Editing:** Add, remove, and reorder packs within a profile without touching your main load order. Edit the *active* profile and it re-applies automatically, so your changes stay live.
-- ⭐ **Favorites:** Star profiles to pin them to the top of the list.
-- 🖼️ **Custom Icons:** Assign a custom image to any profile; auto-generates a composite icon from your pack art if none is set.
-- 📤 **Import / Export:** Share profiles as `.rpprofile` files — a single JSON file that includes your pack list and custom icon.
-- ⚠️ **Missing Pack Detection:** Profiles with unavailable packs are flagged automatically and can still be applied without the missing packs.
-- ⌨️ **Keyboard & Narrator Friendly:** The profile and pack lists are built on Minecraft's native widgets, so they support keyboard navigation and screen-reader narration.
+A lightweight **client-side Fabric mod** that lets you save, manage, and share named **resource pack load order profiles** — switch between completely different pack setups in seconds, right from the resource pack screen.
 
 ---
 
-## 🗂️ Profile Files
-
-Profiles are saved to:
-
-```
-config/resourcepackprofiles.json
-```
-
-Custom icons are stored in:
-
-```
-config/resourcepackprofiles/icons/
-```
-
-Exported profiles use the `.rpprofile` format:
-
-```json
-{
-  "name": "My Profile",
-  "packIds": ["file/Pack1", "file/Pack2"],
-  "favorite": false,
-  "customIcon": "<base64 encoded PNG or null>"
-}
-```
+![Profile screen showing a list of saved profiles with pack counts and custom icons](https://raw.githubusercontent.com/ZephByte/ResourcePackProfiles/main/docs/screenshot.png)
 
 ---
 
-## 💻 Usage
+## Features
 
-Open the **Resource Pack Profiles** screen via the **Profiles** button on the vanilla resource pack screen (left of *Open Pack Folder*), or via [Mod Menu](https://modrinth.com/mod/modmenu).
+- **Profile Saving** — Snapshot your current resource pack load order as a named profile with a single click.
+- **Instant Loading** — Apply any saved profile and have your packs reload automatically; no restarts needed.
+- **Profile Editing** — Add, remove, and reorder packs within a profile without touching your main load order. Edit the *active* profile and it re-applies automatically, so your changes stay live.
+- **Favorites** — Star profiles to pin them to the top of the list.
+- **Custom Icons** — Assign a custom image to any profile; auto-generates a composite icon from your pack art if none is set.
+- **Import / Export** — Share profiles as `.rpprofile` files — a single JSON that includes your pack list and custom icon.
+- **Missing Pack Detection** — Profiles with unavailable packs are flagged automatically and can still be applied without the missing packs.
+- **Keyboard & Narrator Friendly** — Built on Minecraft's native widgets, so the profile and pack lists support full keyboard navigation and screen-reader narration.
+
+---
+
+## Download
+
+- **[Modrinth](https://modrinth.com/mod/resource-pack-profiles)** (recommended)
+- **[GitHub Releases](https://github.com/ZephByte/ResourcePackProfiles/releases)**
+
+---
+
+## Installation
+
+1. Install [Fabric Loader](https://fabricmc.net/) for your Minecraft version.
+2. Install [Fabric API](https://modrinth.com/mod/fabric-api).
+3. Install [Fabric Language Kotlin](https://modrinth.com/mod/fabric-language-kotlin).
+4. Drop the mod `.jar` into your `.minecraft/mods` folder.
+5. (Optional) Install [Mod Menu](https://modrinth.com/mod/modmenu) to open the profiles screen from the mods list.
+
+**Client-side only** — no server installation needed.
+
+---
+
+## Compatibility
+
+| Dependency | Version |
+|---|---|
+| Minecraft | `26.1.2` |
+| Fabric Loader | `0.19.3+` |
+| Fabric API | `0.152.1+26.1.2` |
+| Fabric Language Kotlin | `1.13.12+kotlin.2.4.0` |
+| Mod Menu | `18.0.0-beta.1` *(optional)* |
+
+---
+
+## Usage
+
+Open the **Resource Pack Profiles** screen via the **Profiles** button on the vanilla resource pack screen *(left of Open Pack Folder)*, or via [Mod Menu](https://modrinth.com/mod/modmenu).
 
 | Action | How |
 |---|---|
@@ -62,38 +73,55 @@ Open the **Resource Pack Profiles** screen via the **Profiles** button on the va
 | Export a profile | Open Edit (✎) → click the export button (bottom right) |
 | Import a profile | Click the import button (bottom right of the profile list) |
 
-In the editor, click a pack in the **Available** column to add it to the top of **Selected**, and use the arrows on a selected pack's icon to remove it or move it up/down the load order.
+In the editor, click a pack in the **Available** column to add it to the top of **Selected**. Use the arrow overlay on a selected pack's icon to remove it or reorder it. With keyboard focus, use **Enter** to add/remove and **Shift+Up/Down** to reorder.
 
 ---
 
-## 🔌 Compatibility
+## Profile File Format
 
-- Minecraft: `26.1.2`
-- Fabric Loader: `0.19.3+`
-- Fabric API: `0.152.1+26.1.2`
-- Fabric Language Kotlin: `1.13.12+kotlin.2.4.0` (required)
-- [Mod Menu](https://modrinth.com/mod/modmenu): `18.0.0-beta.1` (optional — only if you want to open the screen from Mod Menu)
-- **Client-side only** — no server-side installation needed
+Profiles are saved to:
+
+```
+config/resourcepackprofiles.json
+```
+
+Custom icons are stored in:
+
+```
+config/resourcepackprofiles/icons/
+```
+
+Exported `.rpprofile` files are standard JSON:
+
+```json
+{
+  "name": "My Profile",
+  "packIds": ["file/Pack1", "file/Pack2"],
+  "favorite": false,
+  "customIcon": "<base64 encoded PNG, or null>"
+}
+```
 
 ---
 
-## 📦 Installation
+## Building from Source
 
-1. Install [Fabric Loader](https://fabricmc.net/) for your Minecraft version.
-2. Install [Fabric API](https://modrinth.com/mod/fabric-api).
-3. Install [Fabric Language Kotlin](https://modrinth.com/mod/fabric-language-kotlin).
-4. Drop the `ResourcePackProfiles-x.x.x.jar` into your `.minecraft/mods` folder.
-5. (Optional) Install [Mod Menu](https://modrinth.com/mod/modmenu) to open the profiles screen from the mods list.
-6. Launch the game and open the resource pack screen to get started.
+```bash
+git clone https://github.com/ZephByte/ResourcePackProfiles.git
+cd ResourcePackProfiles
+./gradlew build
+```
 
----
-
-## 📜 License
-
-MIT License — free to use, modify, and distribute.
+The built jar will be in `build/libs/`.
 
 ---
 
-## 👤 Author
+## License
 
-Developed by [ZephByte](https://github.com/zephbyte)
+MIT - free to use, modify, and redistribute. See [LICENSE](LICENSE).
+
+---
+
+## Author
+
+Made by [ZephByte](https://github.com/ZephByte).
