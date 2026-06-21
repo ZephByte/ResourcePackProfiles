@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 plugins {
     kotlin("jvm") version "2.4.0"
     id("fabric-loom") version "1.16-SNAPSHOT"
+    id("com.modrinth.minotaur") version "2.+"
 }
 
 version = project.property("mod_version") as String
@@ -80,5 +81,28 @@ tasks.withType<KotlinCompile>().configureEach {
 tasks.jar {
     from("LICENSE.txt") {
         rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}
+
+val modVersion = project.version as String
+val modrinthVersionType = when {
+    modVersion.contains("-alpha") -> "alpha"
+    modVersion.contains("-beta")  -> "beta"
+    else                          -> "release"
+}
+
+modrinth {
+    token.set(System.getenv("MODRINTH_TOKEN") ?: "")
+    projectId.set("resource-pack-profiles")
+    versionNumber.set(modVersion)
+    versionType.set(modrinthVersionType)
+    uploadFile.set(tasks.remapJar)
+    gameVersions.add(project.property("minecraft_version") as String)
+    loaders.add("fabric")
+    changelog.set(System.getenv("CHANGELOG") ?: "")
+    dependencies {
+        required.project("fabric-api")
+        required.project("fabric-language-kotlin")
+        optional.project("modmenu")
     }
 }
