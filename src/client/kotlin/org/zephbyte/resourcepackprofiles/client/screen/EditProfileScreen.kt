@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory
 import org.zephbyte.resourcepackprofiles.client.profile.PackIcons
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileIconManager
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
+import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
 import org.zephbyte.resourcepackprofiles.client.util.DynamicTextureCache
 import org.zephbyte.resourcepackprofiles.client.util.FileDialogs
 import org.zephbyte.resourcepackprofiles.client.util.ScreenUtils
@@ -52,6 +53,10 @@ class EditProfileScreen(
     // the edits stay live instead of silently deactivating the profile.
     private var wasActive = false
 
+    // Snapshot of the profile as it existed when this screen opened. Used for icon preview so
+    // extractRenderState doesn't call getProfiles().find every frame.
+    private var profileForPreview: ResourcePackProfile? = null
+
     // Layout constants — mirror the vanilla pack screen: two 200px-wide lists with an 8px gap
     // centred on the screen.
     private val entryHeight = 36
@@ -83,6 +88,7 @@ class EditProfileScreen(
             onClose()
             return
         }
+        profileForPreview = profile
         selectedPacks = profile.packIds.reversed().toMutableList()
         wasActive = ProfileManager.isActiveProfile(profile)
         recomputeAvailable()
@@ -194,7 +200,7 @@ class EditProfileScreen(
         packTextures.getOrRegister(packId, UNKNOWN_PACK) { PackIcons.read(packId) }
 
     /** Texture id for the profile-icon preview, reflecting any staged icon change. */
-    private fun previewIconId(profile: org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile): Identifier {
+    private fun previewIconId(profile: ResourcePackProfile): Identifier {
         return when {
             pendingIconPath != null -> previewTextures.getOrRegister(PREVIEW_KEY, UNKNOWN_PACK) {
                 try {
@@ -204,8 +210,14 @@ class EditProfileScreen(
                     null
                 }
             }
-            pendingIconRemove -> previewTextures.getOrRegister(PREVIEW_KEY, UNKNOWN_PACK) {
-                ProfileIconManager.buildCompositeImage(selectedPacks.reversed())
+            pendingIconRemove -> {
+                // If there are no file/ packs, buildCompositeImage returns null every time and
+                // getOrRegister never caches the result, causing a re-call every frame. Short-
+                // circuit to the fallback instead.
+                if (selectedPacks.none { it.startsWith("file/") }) UNKNOWN_PACK
+                else previewTextures.getOrRegister(PREVIEW_KEY, UNKNOWN_PACK) {
+                    ProfileIconManager.buildCompositeImage(selectedPacks.reversed())
+                }
             }
             else -> ProfileIconManager.getIconId(profile)
         }
@@ -273,9 +285,9 @@ class EditProfileScreen(
         ScreenUtils.drawTransferIcon(context, centerX + 108, height - 28, into = false)
 
         // Profile icon preview next to the name field (reflects staged changes)
-        val profile = ProfileManager.getProfiles().find { it.name == originalName }
-        if (profile != null) {
-            context.blit(RenderPipelines.GUI_TEXTURED, previewIconId(profile), centerX - 124, 16, 0f, 0f, 20, 20, 20, 20)
+        val previewProfile = profileForPreview
+        if (previewProfile != null) {
+            context.blit(RenderPipelines.GUI_TEXTURED, previewIconId(previewProfile), centerX - 124, 16, 0f, 0f, 20, 20, 20, 20)
         }
 
         // Column headers — vanilla styles these bold + underlined + white
@@ -333,14 +345,24 @@ class EditProfileScreen(
             return super.keyPressed(event)
         }
 
-        fun rebuild(packIds: List<String>) = replaceEntries(packIds.map { PackEntry(it, isSelectedList) })
+        fun rebuild(packIds: List<String>) =
+            replaceEntries(packIds.mapIndexed { i, id -> PackEntry(id, isSelectedList, i) })
 
-        /** Swap two entries in place (preserves scroll, unlike a full rebuild). */
-        fun swapEntries(a: Int, b: Int) = swap(a, b)
+        /** Swap two entries in place (preserves scroll) and update their cached indices. */
+        fun swapEntries(a: Int, b: Int) {
+            children()[a].listIndex = b
+            children()[b].listIndex = a
+            swap(a, b)
+        }
     }
 
-    private inner class PackEntry(private val packId: String, private val isSelectedList: Boolean) :
-        ObjectSelectionList.Entry<PackEntry>() {
+    private inner class PackEntry(
+        private val packId: String,
+        private val isSelectedList: Boolean,
+        // Current position in selectedPacks (or -1 for available-list entries). Updated by
+        // PackList.swapEntries so mouse/key handlers and the hover overlay stay O(1).
+        var listIndex: Int = -1
+    ) : ObjectSelectionList.Entry<PackEntry>() {
 
         override fun getNarration(): Component =
             Component.literal(resolvePackProfile(packId)?.title?.string ?: packId)
@@ -364,8 +386,8 @@ class EditProfileScreen(
             }
 
             // Selected column: act on the hovered arrow region
-            val index = selectedPacks.indexOf(packId)
-            if (index < 0) return false
+            val index = listIndex
+            if (index !in selectedPacks.indices) return false
             when (getHoveredArrowRegion(mx, my, iconX, iconY)) {
                 ArrowRegion.UNSELECT -> {
                     removePackAt(index)
@@ -388,8 +410,8 @@ class EditProfileScreen(
                 return false
             }
 
-            val index = selectedPacks.indexOf(packId)
-            if (index < 0) return false
+            val index = listIndex
+            if (index !in selectedPacks.indices) return false
             if (confirm) {
                 removePackAt(index)
                 return true
@@ -413,7 +435,7 @@ class EditProfileScreen(
                 context.fill(iconX, iconY, iconX + packIconSize, iconY + packIconSize, 0x80FFFFFF.toInt())
                 if (isSelectedList) {
                     val region = getHoveredArrowRegion(mouseX, mouseY, iconX, iconY)
-                    val index = selectedPacks.indexOf(packId)
+                    val index = listIndex
 
                     val unselectSprite = if (region == ArrowRegion.UNSELECT) UNSELECT_HIGHLIGHTED else UNSELECT
                     context.blitSprite(RenderPipelines.GUI_TEXTURED, unselectSprite, iconX, iconY, packIconSize, packIconSize)

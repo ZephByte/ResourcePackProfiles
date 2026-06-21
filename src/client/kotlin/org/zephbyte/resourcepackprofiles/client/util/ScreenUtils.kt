@@ -8,11 +8,10 @@ object ScreenUtils {
     /** Trims [text] with a trailing ellipsis so it fits within [maxWidth] pixels for [font]. */
     fun truncate(font: Font, text: String, maxWidth: Int): String {
         if (font.width(text) <= maxWidth) return text
-        var s = text
-        while (s.isNotEmpty() && font.width("$s...") > maxWidth) {
-            s = s.dropLast(1)
-        }
-        return "$s..."
+        val ellipsis = "..."
+        val ellipsisWidth = font.width(ellipsis)
+        if (maxWidth <= ellipsisWidth) return ellipsis
+        return font.plainSubstrByWidth(text, maxWidth - ellipsisWidth) + ellipsis
     }
 
     /**

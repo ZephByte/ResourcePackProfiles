@@ -234,15 +234,13 @@ object ProfileManager {
             val data: ExportData = gson.fromJson(json, ExportData::class.java)
             val name = overwriteName ?: data.name
 
-            // Check for existing profile if not an overwrite
             if (overwriteName == null && hasProfile(name)) {
                 return ImportResult.Conflict(name)
             }
 
-            // If overwriting, delete old icon first
-            if (overwriteName != null) {
-                profiles[name]?.let { ProfileIconManager.deleteCustomIcon(it) }
-            }
+            // Capture old icon filename before overwriting — used for cleanup after a successful
+            // write so we never delete the old file before the new one is confirmed on disk.
+            val oldCustomIcon: String? = if (overwriteName != null) profiles[name]?.customIcon else null
 
             profiles[name] = ResourcePackProfile(
                 name = name,
@@ -250,9 +248,21 @@ object ProfileManager {
                 favorite = data.favorite
             )
 
-            // Import custom icon if present
             if (data.customIcon != null) {
+                // importIconFromBase64 now propagates exceptions: if it throws, save() is skipped
+                // and the old icon file remains untouched on disk.
                 ProfileIconManager.importIconFromBase64(name, data.customIcon)
+                // Icon written successfully. If the old icon had a different filename (edge case
+                // after a failed rename), it is now orphaned — clean it up.
+                if (oldCustomIcon != null) {
+                    val newFileName = "${ProfileIconManager.sanitizeFileName(name)}.png"
+                    if (oldCustomIcon != newFileName) {
+                        try { Files.deleteIfExists(iconsDir.resolve(oldCustomIcon)) } catch (_: Exception) {}
+                    }
+                }
+            } else if (overwriteName != null && oldCustomIcon != null) {
+                // Imported profile carries no icon; remove the existing custom icon file.
+                try { Files.deleteIfExists(iconsDir.resolve(oldCustomIcon)) } catch (_: Exception) {}
             }
 
             save()
@@ -274,7 +284,9 @@ object ProfileManager {
             logger.warn("Profile '{}' is missing packs: {}", profile.name, missingIds)
         }
 
-        val validUserPacks = profile.packIds.filter { it in availableIds }
+        // Strip required/non-auto packs so builtinPacks + validUserPacks never contains duplicates
+        // (an imported profile could legally include a required pack id in its list).
+        val validUserPacks = getUserPacks(profile.packIds.filter { it in availableIds })
 
         // Preserve built-in/required packs that are always present
         val builtinPacks = client.options.resourcePacks.filter { it !in getUserPacks(client.options.resourcePacks.toList()) }

@@ -122,11 +122,15 @@ object ProfileIconManager {
         val fileName = "${sanitizeFileName(profileName)}.png"
         val destPath = iconsDir.resolve(fileName)
 
-        // Read, resize to 64x64, save as PNG
+        // Read, resize to 64x64, save as PNG. try/finally ensures the NativeImage is
+        // always closed even if writeToFile throws (e.g. disk full, permissions).
         val image = Files.newInputStream(sourcePath).use { NativeImage.read(it) }
         val resized = resizeToIcon(image)
-        resized.writeToFile(destPath)
-        resized.close()
+        try {
+            resized.writeToFile(destPath)
+        } finally {
+            resized.close()
+        }
 
         ProfileManager.setCustomIcon(profileName, fileName)
         // Defer texture invalidation to the render thread
@@ -163,14 +167,12 @@ object ProfileIconManager {
         Files.createDirectories(iconsDir)
         val fileName = "${sanitizeFileName(profileName)}.png"
         val destPath = iconsDir.resolve(fileName)
-        try {
-            val bytes = Base64.getDecoder().decode(base64)
-            Files.write(destPath, bytes)
-            ProfileManager.setCustomIcon(profileName, fileName)
-            Minecraft.getInstance().execute { invalidate(profileName) }
-        } catch (e: Exception) {
-            logger.error("Failed to import icon from base64 for '$profileName'", e)
-        }
+        // Exceptions propagate to the caller (importProfileFromPath), which catches them and
+        // returns ImportResult.Failed without calling save() — so the old icon is preserved.
+        val bytes = Base64.getDecoder().decode(base64)
+        Files.write(destPath, bytes)
+        ProfileManager.setCustomIcon(profileName, fileName)
+        Minecraft.getInstance().execute { invalidate(profileName) }
     }
 
     /** Maps a profile name to a filesystem-safe icon file stem. */

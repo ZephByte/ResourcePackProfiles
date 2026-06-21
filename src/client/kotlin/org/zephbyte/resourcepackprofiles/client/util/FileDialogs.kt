@@ -1,28 +1,30 @@
 package org.zephbyte.resourcepackprofiles.client.util
 
-import org.lwjgl.BufferUtils
-import org.lwjgl.PointerBuffer
-import org.lwjgl.system.MemoryUtil
+import org.lwjgl.system.MemoryStack
 import org.lwjgl.util.tinyfd.TinyFileDialogs
 
 /**
- * Thin wrapper around TinyFileDialogs that hides the manual LWJGL filter-buffer construction.
- * These calls block, so invoke them off the render thread.
+ * Thin wrapper around TinyFileDialogs using a MemoryStack so filter-string memory is
+ * freed automatically when the call returns. These calls block, so invoke them off the
+ * render thread.
  */
 object FileDialogs {
 
-    private fun filterBuffer(patterns: Array<String>): PointerBuffer {
-        val buf = BufferUtils.createPointerBuffer(patterns.size)
-        for (pattern in patterns) buf.put(MemoryUtil.memUTF8(pattern))
-        buf.flip()
-        return buf
-    }
-
     /** Opens a file-open dialog. Returns the chosen path, or null if cancelled. */
     fun openFile(title: String, patterns: Array<String>, description: String): String? =
-        TinyFileDialogs.tinyfd_openFileDialog(title, null, filterBuffer(patterns), description, false)
+        MemoryStack.stackPush().use { stack ->
+            val buf = stack.mallocPointer(patterns.size)
+            for (pattern in patterns) buf.put(stack.UTF8(pattern))
+            buf.flip()
+            TinyFileDialogs.tinyfd_openFileDialog(title, null, buf, description, false)
+        }
 
     /** Opens a file-save dialog. Returns the chosen path, or null if cancelled. */
     fun saveFile(title: String, defaultName: String, patterns: Array<String>, description: String): String? =
-        TinyFileDialogs.tinyfd_saveFileDialog(title, defaultName, filterBuffer(patterns), description)
+        MemoryStack.stackPush().use { stack ->
+            val buf = stack.mallocPointer(patterns.size)
+            for (pattern in patterns) buf.put(stack.UTF8(pattern))
+            buf.flip()
+            TinyFileDialogs.tinyfd_saveFileDialog(title, defaultName, buf, description)
+        }
 }

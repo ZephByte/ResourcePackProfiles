@@ -31,6 +31,10 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
     // pack selection screen instead of a stale one that would overwrite the applied packs.
     private var profileApplied = false
 
+    // Computed once per frame in extractRenderState and shared by all ProfileEntry.extractContent
+    // calls in that frame so each row doesn't rebuild the same set independently.
+    private var cachedAvailablePackIds: Set<String> = emptySet()
+
     private val listTop = 32
     private val entryHeight = 26
     private val iconSize = 21
@@ -155,12 +159,12 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
         }
     }
 
-    private fun missingPackCount(profile: ResourcePackProfile): Int {
-        val allIds = minecraft.resourcePackRepository.availablePacks.map { it.id }.toSet()
-        return profile.packIds.count { it !in allIds }
-    }
+    private fun missingPackCount(profile: ResourcePackProfile): Int =
+        profile.packIds.count { it !in cachedAvailablePackIds }
 
     override fun extractRenderState(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
+        // Rebuild the available-ID set once per frame before the list entries render.
+        cachedAvailablePackIds = minecraft.resourcePackRepository.availablePacks.map { it.id }.toSet()
         super.extractRenderState(context, mouseX, mouseY, delta)
 
         // Icon glyph on the otherwise-blank import button

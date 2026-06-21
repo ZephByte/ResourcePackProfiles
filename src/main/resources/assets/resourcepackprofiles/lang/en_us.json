@@ -30,5 +30,6 @@
   "label.resourcepackprofiles.available": "Available",
   "label.resourcepackprofiles.selected": "Selected",
   "label.resourcepackprofiles.selected_missing": "Selected (%s missing)",
-  "label.resourcepackprofiles.pack_missing": "Missing — pack not found"
+  "label.resourcepackprofiles.pack_missing": "Missing — pack not found",
+  "label.resourcepackprofiles.missing_more": "... and %s more"
 }
