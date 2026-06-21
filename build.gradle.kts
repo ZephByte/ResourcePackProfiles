@@ -97,7 +97,7 @@ modrinth {
     versionNumber.set(modVersion)
     versionType.set(modrinthVersionType)
     uploadFile.set(tasks.remapJar)
-    gameVersions.add(project.property("minecraft_version") as String)
+    (project.property("modrinth_versions") as String).split(",").forEach { gameVersions.add(it.trim()) }
     loaders.add("fabric")
     changelog.set(System.getenv("CHANGELOG") ?: "")
     dependencies {
