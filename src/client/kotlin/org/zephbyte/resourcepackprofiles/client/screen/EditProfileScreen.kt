@@ -121,7 +121,11 @@ class EditProfileScreen(
                     arrayOf("*.png", "*.jpg", "*.jpeg"),
                     "Image Files (*.png, *.jpg)"
                 ) ?: return@Thread
+                // The blocking dialog may outlive this screen if the user closes it first; only
+                // stage the icon if we're still the active screen, otherwise we'd mutate a closed
+                // screen and touch a texture cache that onClose already cleaned up.
                 Minecraft.getInstance().execute {
+                    if (minecraft.screen !== this) return@execute
                     pendingIconPath = Path.of(path)
                     pendingIconRemove = false
                     previewTextures.invalidate(PREVIEW_KEY)
