@@ -175,7 +175,14 @@ object ProfileIconManager {
         Minecraft.getInstance().execute { invalidate(profileName) }
     }
 
-    /** Maps a profile name to a filesystem-safe icon file stem. */
-    fun sanitizeFileName(profileName: String): String =
-        profileName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")
+    /**
+     * Maps a profile name to a filesystem-safe icon file stem. A short hash of the full name is
+     * appended so two names that sanitize to the same characters (e.g. "My Pack" and "My/Pack")
+     * don't collide on the same icon file and overwrite each other.
+     */
+    fun sanitizeFileName(profileName: String): String {
+        val safe = profileName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")
+        val hash = Integer.toHexString(profileName.hashCode())
+        return "${safe}_$hash"
+    }
 }
