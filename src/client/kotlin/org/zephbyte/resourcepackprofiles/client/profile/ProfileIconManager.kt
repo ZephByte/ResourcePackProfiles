@@ -149,16 +149,20 @@ object ProfileIconManager {
         invalidate(profile.name)
     }
 
-    fun encodeIconToBase64(profileName: String): String? {
-        val profile = ProfileManager.getProfiles().find { it.name == profileName } ?: return null
-        if (profile.customIcon == null) return null
-        val iconPath = iconsDir.resolve(profile.customIcon)
+    /**
+     * Reads [profile]'s custom icon and base64-encodes it for export, or null if it has none.
+     * Takes the profile directly (rather than looking it up by name) so this can run on the export
+     * background thread without touching the shared profile map.
+     */
+    fun encodeIconToBase64(profile: ResourcePackProfile): String? {
+        val customIcon = profile.customIcon ?: return null
+        val iconPath = iconsDir.resolve(customIcon)
         if (!Files.exists(iconPath)) return null
         return try {
             val bytes = Files.readAllBytes(iconPath)
             Base64.getEncoder().encodeToString(bytes)
         } catch (e: Exception) {
-            logger.error("Failed to encode icon to base64 for '$profileName'", e)
+            logger.error("Failed to encode icon to base64 for '${profile.name}'", e)
             null
         }
     }

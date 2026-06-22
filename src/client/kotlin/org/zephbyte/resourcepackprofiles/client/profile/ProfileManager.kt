@@ -203,7 +203,7 @@ object ProfileManager {
         ) ?: return false
 
         return try {
-            val iconBase64 = ProfileIconManager.encodeIconToBase64(profile.name)
+            val iconBase64 = ProfileIconManager.encodeIconToBase64(profile)
             val exportData = ExportData(
                 name = profile.name,
                 packIds = profile.packIds,
