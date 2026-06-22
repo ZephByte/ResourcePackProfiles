@@ -4,7 +4,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 plugins {
     kotlin("jvm") version "2.4.0"
     id("fabric-loom") version "1.16-SNAPSHOT"
-    id("com.modrinth.minotaur") version "2.+"
+    id("me.modmuss50.mod-publish-plugin") version "0.8.4"
 }
 
 version = project.property("mod_version") as String
@@ -84,24 +84,37 @@ tasks.jar {
 }
 
 val modVersion = project.version as String
-val modrinthVersionType = when {
-    modVersion.contains("-alpha") -> "alpha"
-    modVersion.contains("-beta")  -> "beta"
-    else                          -> "release"
-}
+val gameVersionList = (project.property("modrinth_versions") as String).split(",").map { it.trim() }
 
-modrinth {
-    token.set(System.getenv("MODRINTH_TOKEN") ?: "")
-    projectId.set("resource-pack-profiles")
-    versionNumber.set(modVersion)
-    versionType.set(modrinthVersionType)
-    uploadFile.set(tasks.remapJar)
-    (project.property("modrinth_versions") as String).split(",").forEach { gameVersions.add(it.trim()) }
-    loaders.add("fabric")
-    changelog.set(System.getenv("CHANGELOG") ?: "")
-    dependencies {
-        required.project("fabric-api")
-        required.project("fabric-language-kotlin")
-        optional.project("modmenu")
+publishMods {
+    file.set(tasks.remapJar.flatMap { it.archiveFile })
+    version.set(modVersion)
+    changelog.set(providers.environmentVariable("CHANGELOG").orElse(""))
+    type.set(
+        when {
+            modVersion.contains("-alpha") -> ALPHA
+            modVersion.contains("-beta")  -> BETA
+            else                          -> STABLE
+        }
+    )
+    modLoaders.add("fabric")
+
+    modrinth {
+        accessToken.set(providers.environmentVariable("MODRINTH_TOKEN").orElse(""))
+        projectId.set("resource-pack-profiles")
+        minecraftVersions.addAll(gameVersionList)
+        requires { slug.set("fabric-api") }
+        requires { slug.set("fabric-language-kotlin") }
+        optional { slug.set("modmenu") }
+    }
+
+    curseforge {
+        accessToken.set(providers.environmentVariable("CURSEFORGE_TOKEN").orElse(""))
+        // Numeric CurseForge project ID, set in gradle.properties once the project exists.
+        projectId.set(providers.gradleProperty("curseforge_id").orElse(""))
+        minecraftVersions.addAll(gameVersionList)
+        requires { slug.set("fabric-api") }
+        requires { slug.set("fabric-language-kotlin") }
+        optional { slug.set("modmenu") }
     }
 }
