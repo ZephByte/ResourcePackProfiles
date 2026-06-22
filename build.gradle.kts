@@ -102,7 +102,8 @@ publishMods {
 
     modrinth {
         accessToken.set(providers.environmentVariable("MODRINTH_TOKEN").orElse(""))
-        projectId.set("resource-pack-profiles")
+        // Modrinth project ID (not the slug — the plugin validates the ID format)
+        projectId.set(providers.gradleProperty("modrinth_id").orElse(""))
         minecraftVersions.addAll(gameVersionList)
         requires { slug.set("fabric-api") }
         requires { slug.set("fabric-language-kotlin") }
