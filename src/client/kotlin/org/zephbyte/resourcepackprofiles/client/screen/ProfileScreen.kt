@@ -137,7 +137,9 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
         Thread {
             val pathStr = ProfileManager.pickProfileToImport() ?: return@Thread
             val filePath = Path.of(pathStr)
-            Minecraft.getInstance().execute { handleImport(filePath) }
+            // The blocking dialog may outlive this screen if the user closes it first; only act if
+            // we're still the active screen, otherwise handleImport would yank a closed screen back.
+            Minecraft.getInstance().execute { if (minecraft.gui.screen() === this) handleImport(filePath) }
         }.start()
     }
 
