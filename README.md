@@ -50,11 +50,11 @@ A lightweight **client-side Fabric mod** that lets you save, manage, and share n
 
 | Dependency | Version |
 |---|---|
-| Minecraft | `26.1.2` |
-| Fabric Loader | `0.19.3+` |
-| Fabric API | `0.152.1+26.1.2` |
-| Fabric Language Kotlin | `1.13.12+kotlin.2.4.0` |
-| Mod Menu | `18.0.0-beta.1` *(optional)* |
+| Minecraft | `26.3` |
+| Fabric Loader | `0.19.5+` |
+| Fabric API | `0.161.0+26.3` |
+| Fabric Language Kotlin | `1.14.1+kotlin.2.4.20` |
+| Mod Menu | `21.0.0-beta.1` *(optional)* |
 
 ---
 

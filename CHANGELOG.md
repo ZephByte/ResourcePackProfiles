@@ -1,5 +1,22 @@
 # Changelog
 
+## Resource Pack Profiles - v1.0.0+26.3
+
+Minecraft 26.3 compatibility release of **Resource Pack Profiles**.
+
+### Changes
+- Updated the Fabric Loader, Fabric API, Fabric Language Kotlin, and Mod Menu development dependencies for Minecraft 26.3
+- Migrated resource-pack icon loading and native file dialogs to Minecraft 26.3's client APIs
+
+### Requirements
+| | |
+|---|---|
+| Minecraft | 26.3 |
+| Fabric Loader | 0.19.5+ |
+| Fabric API | 0.161.0+26.3 |
+| Fabric Language Kotlin | 1.14.1+kotlin.2.4.20 |
+| Mod Menu | 21.0.0-beta.1 *(optional)* |
+
 ## Resource Pack Profiles - v1.0.0+26.2
 
 > **First stable release.** Please report any issues on [GitHub](https://github.com/ZephByte/ResourcePackProfiles/issues).
