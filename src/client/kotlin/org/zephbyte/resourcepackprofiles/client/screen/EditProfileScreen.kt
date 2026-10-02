@@ -1,5 +1,7 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
+import org.zephbyte.resourcepackprofiles.client.util.activeScreen
+import org.zephbyte.resourcepackprofiles.client.util.showScreen
 import com.mojang.blaze3d.platform.NativeImage
 import net.minecraft.ChatFormatting
 import net.minecraft.client.Minecraft
@@ -125,7 +127,7 @@ class EditProfileScreen(
                 // stage the icon if we're still the active screen, otherwise we'd mutate a closed
                 // screen and touch a texture cache that onClose already cleaned up.
                 Minecraft.getInstance().execute {
-                    if (minecraft.gui.screen() !== this) return@execute
+                    if (minecraft.activeScreen() !== this) return@execute
                     pendingIconPath = Path.of(path)
                     pendingIconRemove = false
                     previewTextures.invalidate(PREVIEW_KEY)
@@ -330,7 +332,7 @@ class EditProfileScreen(
     override fun onClose() {
         packTextures.cleanup()
         previewTextures.cleanup()
-        minecraft.setScreenAndShow(parent)
+        minecraft.showScreen(parent)
     }
 
     /** One pack column. [isSelectedList] toggles add-vs-reorder behaviour and the hover affordance. */

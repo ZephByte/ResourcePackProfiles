@@ -13,6 +13,7 @@ object PackIcons {
         val repo = Minecraft.getInstance().resourcePackRepository
         val packProfile = repo.availablePacks.find { it.id == packId } ?: return null
         return try {
+//? if >=26.3 {
             packProfile.open().use { packResources ->
                 val resources = packResources.findFirst().orElse(null) ?: return null
                 resources.use {
@@ -20,6 +21,10 @@ object PackIcons {
                     supplier.get().use(NativeImage::read)
                 }
             }
+//?} else {
+/*            val supplier = packProfile.open().getRootResource("pack.png") ?: return null
+            supplier.get().use { NativeImage.read(it) }
+*///?}
         } catch (_: Exception) {
             null
         }

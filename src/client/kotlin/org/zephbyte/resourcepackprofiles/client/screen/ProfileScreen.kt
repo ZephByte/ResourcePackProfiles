@@ -1,5 +1,8 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
+import org.zephbyte.resourcepackprofiles.client.util.activeScreen
+import org.zephbyte.resourcepackprofiles.client.util.setGuiScreen
+import org.zephbyte.resourcepackprofiles.client.util.showScreen
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.input.MouseButtonEvent
@@ -73,10 +76,10 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
         if (name.isEmpty()) return
 
         if (ProfileManager.hasProfile(name)) {
-            minecraft.setScreenAndShow(ConfirmScreen(
+            minecraft.showScreen(ConfirmScreen(
                 { confirmed ->
                     if (confirmed) saveProfile(name)
-                    minecraft.setScreenAndShow(this)
+                    minecraft.showScreen(this)
                 },
                 Component.translatable("screen.resourcepackprofiles.overwrite.title"),
                 Component.translatable("screen.resourcepackprofiles.overwrite.message", name)
@@ -102,17 +105,17 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
 
     private fun onLoad(profile: ResourcePackProfile) {
         if (ProfileManager.isActiveProfile(profile)) return
-        minecraft.setScreenAndShow(ConfirmScreen(
+        minecraft.showScreen(ConfirmScreen(
             { confirmed ->
                 if (confirmed) {
                     val missingIds = ProfileManager.applyProfile(profile)
                     profileApplied = true
                     if (missingIds.isNotEmpty()) {
-                        minecraft.setScreenAndShow(MissingPacksScreen(this, missingIds))
+                        minecraft.showScreen(MissingPacksScreen(this, missingIds))
                         return@ConfirmScreen
                     }
                 }
-                minecraft.setScreenAndShow(this)
+                minecraft.showScreen(this)
             },
             Component.translatable("screen.resourcepackprofiles.load.title"),
             Component.translatable("screen.resourcepackprofiles.load.message", profile.name)
@@ -120,13 +123,13 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
     }
 
     private fun onDelete(name: String) {
-        minecraft.setScreenAndShow(ConfirmScreen(
+        minecraft.showScreen(ConfirmScreen(
             { confirmed ->
                 if (confirmed) {
                     ProfileManager.deleteProfile(name)
                     profileList.refresh()
                 }
-                minecraft.setScreenAndShow(this)
+                minecraft.showScreen(this)
             },
             Component.translatable("screen.resourcepackprofiles.delete.title"),
             Component.translatable("screen.resourcepackprofiles.delete.message", name)
@@ -139,25 +142,25 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
             val filePath = Path.of(pathStr)
             // The blocking dialog may outlive this screen if the user closes it first; only act if
             // we're still the active screen, otherwise handleImport would yank a closed screen back.
-            Minecraft.getInstance().execute { if (minecraft.gui.screen() === this) handleImport(filePath) }
+            Minecraft.getInstance().execute { if (minecraft.activeScreen() === this) handleImport(filePath) }
         }.start()
     }
 
     private fun handleImport(filePath: Path, overwriteName: String? = null) {
         when (val result = ProfileManager.importProfileFromPath(filePath, overwriteName)) {
-            is ImportResult.Conflict -> minecraft.setScreenAndShow(ConfirmScreen(
+            is ImportResult.Conflict -> minecraft.showScreen(ConfirmScreen(
                 { confirmed ->
                     if (confirmed) handleImport(filePath, result.name)
-                    else minecraft.setScreenAndShow(this)
+                    else minecraft.showScreen(this)
                 },
                 Component.translatable("screen.resourcepackprofiles.overwrite.title"),
                 Component.translatable("screen.resourcepackprofiles.overwrite.message", result.name)
             ))
             is ImportResult.Imported -> {
                 profileList.refresh()
-                minecraft.setScreenAndShow(this)
+                minecraft.showScreen(this)
             }
-            ImportResult.Failed -> minecraft.setScreenAndShow(this)
+            ImportResult.Failed -> minecraft.showScreen(this)
         }
     }
 
@@ -192,9 +195,9 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
         // a stale snapshot that would wipe the applied packs on close. Return to a refreshed
         // instance whose model reflects the packs we just applied instead.
         if (profileApplied && returnTo is RefreshablePackScreen) {
-            minecraft.setScreenAndShow(returnTo.rpp_createRefreshedScreen())
+            minecraft.showScreen(returnTo.rpp_createRefreshedScreen())
         } else {
-            minecraft.gui.setScreen(returnTo)
+            minecraft.setGuiScreen(returnTo)
         }
     }
 
@@ -221,7 +224,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
             .build()
 
         private val editButton = Button.builder(Component.literal("✎")) {
-            minecraft.setScreenAndShow(EditProfileScreen(this@ProfileScreen, profile.name))
+            minecraft.showScreen(EditProfileScreen(this@ProfileScreen, profile.name))
         }.bounds(0, 0, rowButtonSize, rowButtonSize)
             .tooltip(Tooltip.create(Component.translatable("tooltip.resourcepackprofiles.edit")))
             .build()
