@@ -13,8 +13,13 @@ object PackIcons {
         val repo = Minecraft.getInstance().resourcePackRepository
         val packProfile = repo.availablePacks.find { it.id == packId } ?: return null
         return try {
-            val supplier = packProfile.open().getRootResource("pack.png") ?: return null
-            supplier.get().use { NativeImage.read(it) }
+            packProfile.open().use { packResources ->
+                val resources = packResources.findFirst().orElse(null) ?: return null
+                resources.use {
+                    val supplier = it.getRootResource("pack.png") ?: return null
+                    supplier.get().use(NativeImage::read)
+                }
+            }
         } catch (_: Exception) {
             null
         }
