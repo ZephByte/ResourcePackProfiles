@@ -6,7 +6,7 @@
 [![CurseForge](https://img.shields.io/curseforge/v/1583478?label=curseforge&logo=curseforge&color=F16436)](https://www.curseforge.com/minecraft/mc-mods/resource-pack-profiles)
 [![License: MIT](https://img.shields.io/github/license/ZephByte/ResourcePackProfiles)](LICENSE)
 
-A lightweight **client-side Fabric mod** that lets you save, manage, and share named **resource pack load order profiles** — switch between completely different pack setups in seconds, right from the resource pack screen.
+A client-side Fabric mod for saving, managing, and sharing named resource pack load order profiles. Switch between different pack setups from the resource pack screen.
 
 ---
 
@@ -16,14 +16,14 @@ A lightweight **client-side Fabric mod** that lets you save, manage, and share n
 
 ## Features
 
-- **Profile Saving** — Snapshot your current resource pack load order as a named profile with a single click.
-- **Instant Loading** — Apply any saved profile and have your packs reload automatically; no restarts needed.
-- **Profile Editing** — Add, remove, and reorder packs within a profile without touching your main load order. Edit the *active* profile and it re-applies automatically, so your changes stay live.
-- **Favorites** — Star profiles to pin them to the top of the list.
-- **Custom Icons** — Assign a custom image to any profile; auto-generates a composite icon from your pack art if none is set.
-- **Import / Export** — Share profiles as `.rpprofile` files — a single JSON that includes your pack list and custom icon.
-- **Missing Pack Detection** — Profiles with unavailable packs are flagged automatically and can still be applied without the missing packs.
-- **Keyboard & Narrator Friendly** — Built on Minecraft's native widgets, so the profile and pack lists support full keyboard navigation and screen-reader narration.
+- **Save profiles:** save your current resource pack load order as a named profile.
+- **Load profiles:** apply a saved profile and your packs reload without a restart.
+- **Edit profiles:** add, remove, and reorder packs in a profile without changing your main load order. Editing the active profile re-applies it.
+- **Favorites:** star profiles to pin them to the top of the list.
+- **Custom icons:** set an image for any profile. Profiles without one get an icon built from their packs' art.
+- **Import and export:** share profiles as `.rpprofile` files, a single JSON file with the pack list and custom icon.
+- **Missing packs:** profiles that reference packs you don't have are flagged, and can still be applied without them.
+- **Accessibility:** the profile and pack lists use Minecraft's native widgets, so they support keyboard navigation and screen readers.
 
 ---
 
@@ -42,19 +42,17 @@ A lightweight **client-side Fabric mod** that lets you save, manage, and share n
 4. Drop the mod `.jar` into your `.minecraft/mods` folder.
 5. (Optional) Install [Mod Menu](https://modrinth.com/mod/modmenu) to open the profiles screen from the mods list.
 
-**Client-side only** — no server installation needed.
+Client-side only. No server installation is needed.
 
 ---
 
 ## Compatibility
 
-| Dependency | Version |
-|---|---|
-| Minecraft | `26.3` |
-| Fabric Loader | `0.19.5+` |
-| Fabric API | `0.161.0+26.3` |
-| Fabric Language Kotlin | `1.14.1+kotlin.2.4.20` |
-| Mod Menu | `21.0.0-beta.1` *(optional)* |
+| Minecraft | Fabric Loader | Fabric API | Fabric Language Kotlin | Mod Menu *(optional)* |
+|---|---|---|---|---|
+| `26.3` | `0.19.5+` | `0.161.0+26.3` | `1.14.1+kotlin.2.4.20` | `21.0.0-beta.1` |
+| `26.2` | `0.19.3+` | `0.152.2+26.2` | `1.13.12+kotlin.2.4.0` | `20.0.0-beta.3` |
+| `26.1` to `26.1.2` | `0.19.3+` | `0.145.1+26.1` | `1.13.12+kotlin.2.4.0` | `18.0.0-beta.1` |
 
 ---
 
@@ -64,14 +62,14 @@ Open the **Resource Pack Profiles** screen via the **Profiles** button on the va
 
 | Action | How |
 |---|---|
-| Save current load order | Type a name → click **Save Current** |
+| Save current load order | Type a name then click **Save Current** |
 | Load a profile | Click anywhere on the profile's row |
 | Edit packs in a profile | Click ✎ |
 | Delete a profile | Click ✕ |
 | Favorite a profile | Click ★ / ☆ |
-| Set / change a profile icon | Open Edit (✎) → click **Icon…** |
-| Remove a custom icon | Open Edit (✎) → click ✕ next to the icon |
-| Export a profile | Open Edit (✎) → click the export button (bottom right) |
+| Set / change a profile icon | Open Edit (✎) then click **Icon…** |
+| Remove a custom icon | Open Edit (✎) then click ✕ next to the icon |
+| Export a profile | Open Edit (✎) then click the export button (bottom right) |
 | Import a profile | Click the import button (bottom right of the profile list) |
 
 In the editor, click a pack in the **Available** column to add it to the top of **Selected**. Use the arrow overlay on a selected pack's icon to remove it or reorder it. With keyboard focus, use **Enter** to add/remove and **Shift+Up/Down** to reorder.
@@ -112,8 +110,6 @@ git clone https://github.com/ZephByte/ResourcePackProfiles.git
 cd ResourcePackProfiles
 ./gradlew build
 ```
-
-The built jar will be in `build/libs/`.
 
 ---
 

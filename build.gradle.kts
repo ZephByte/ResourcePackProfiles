@@ -7,7 +7,7 @@ plugins {
     id("me.modmuss50.mod-publish-plugin") version "0.8.4"
 }
 
-version = project.property("mod_version") as String
+version = "${project.property("mod_base_version")}+${project.property("minecraft_version")}"
 group = project.property("maven_group") as String
 
 base {
@@ -41,23 +41,25 @@ dependencies {
     // identity passthrough that satisfies Loom's requirement for a non-empty `mappings` config.
     mappings("net.fabricmc:intermediary:0.0.0:v2")
     implementation("net.fabricmc:fabric-loader:${project.property("loader_version")}")
-    implementation("net.fabricmc:sponge-mixin:0.17.4+mixin.0.8.7")
+    implementation("net.fabricmc:sponge-mixin:${project.property("mixin_version")}")
     implementation("net.fabricmc:fabric-language-kotlin:${project.property("kotlin_loader_version")}")
 
     implementation("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_version")}")
-    implementation("com.terraformersmc:modmenu:21.0.0-beta.1")
+    implementation("com.terraformersmc:modmenu:${project.property("modmenu_version")}")
 }
 
 tasks.processResources {
     inputs.property("version", project.version)
     inputs.property("minecraft_version", project.property("minecraft_version"))
     inputs.property("loader_version", project.property("loader_version"))
+    inputs.property("minecraft_dependency", project.property("minecraft_dependency"))
     filteringCharset = "UTF-8"
 
     filesMatching("fabric.mod.json") {
         expand(
             "version" to project.version,
             "minecraft_version" to project.property("minecraft_version") as String,
+            "minecraft_dependency" to project.property("minecraft_dependency") as String,
             "loader_version" to project.property("loader_version") as String,
             "kotlin_loader_version" to project.property("kotlin_loader_version") as String
         )

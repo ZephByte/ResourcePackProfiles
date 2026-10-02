@@ -1,5 +1,6 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
+import org.zephbyte.resourcepackprofiles.client.util.setGuiScreen
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.components.Button
 import net.minecraft.client.gui.screens.Screen
@@ -17,7 +18,7 @@ class MissingPacksScreen(
 
     override fun init() {
         addRenderableWidget(
-            Button.builder(CommonComponents.GUI_DONE) { minecraft.gui.setScreen(parent) }
+            Button.builder(CommonComponents.GUI_DONE) { minecraft.setGuiScreen(parent) }
                 .bounds(width / 2 - 50, height / 2 + 40, 100, 20)
                 .build()
         )
@@ -45,6 +46,6 @@ class MissingPacksScreen(
     }
 
     override fun onClose() {
-        minecraft.gui.setScreen(parent)
+        minecraft.setGuiScreen(parent)
     }
 }
