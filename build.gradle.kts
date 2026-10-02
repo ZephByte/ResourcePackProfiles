@@ -113,6 +113,8 @@ publishMods {
         accessToken.set(providers.environmentVariable("CURSEFORGE_TOKEN").orElse(""))
         // Numeric CurseForge project ID, set in gradle.properties once the project exists.
         projectId.set(providers.gradleProperty("curseforge_id").orElse(""))
+        // CurseForge requires an environment tag on every file; this mod is client-side only.
+        clientRequired.set(true)
         minecraftVersions.addAll(gameVersionList)
         requires { slug.set("fabric-api") }
         requires { slug.set("fabric-language-kotlin") }
