@@ -68,7 +68,18 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
             .tooltip(Tooltip.create(Component.translatable("tooltip.resourcepackprofiles.import")))
             .build())
 
+        // Check every pack in every profile for updates
+        addRenderableWidget(Button.builder(Component.literal("↻")) { onCheckAllUpdates() }
+            .bounds(width / 2 - 50 - 4 - rowButtonSize, height - 28, rowButtonSize, rowButtonSize)
+            .tooltip(Tooltip.create(Component.translatable("tooltip.resourcepackprofiles.check_all_updates")))
+            .build())
+
         profileList.refresh()
+    }
+
+    private fun onCheckAllUpdates() {
+        val sources = ProfileManager.getProfiles().map { UpdateSource(it.name, it.packIds) }
+        minecraft.showScreen(UpdatesScreen(this, sources))
     }
 
     private fun onSave() {
@@ -235,7 +246,13 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
             .tooltip(Tooltip.create(Component.translatable("tooltip.resourcepackprofiles.delete")))
             .build()
 
-        private val buttons = listOf(starButton, editButton, deleteButton)
+        private val updateButton = Button.builder(Component.literal("↻")) {
+            minecraft.showScreen(UpdatesScreen(this@ProfileScreen, listOf(UpdateSource(profile.name, profile.packIds))))
+        }.bounds(0, 0, rowButtonSize, rowButtonSize)
+            .tooltip(Tooltip.create(Component.translatable("tooltip.resourcepackprofiles.check_updates")))
+            .build()
+
+        private val buttons = listOf(updateButton, starButton, editButton, deleteButton)
 
         override fun children(): List<GuiEventListener> = buttons
         override fun narratables(): List<NarratableEntry> = buttons
@@ -258,6 +275,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
             deleteButton.setPosition(rightEdge - rowButtonSize, btnY)
             editButton.setPosition(deleteButton.x - rowButtonSize - 2, btnY)
             starButton.setPosition(editButton.x - rowButtonSize - 2, btnY)
+            updateButton.setPosition(starButton.x - rowButtonSize - 2, btnY)
 
             // Active-profile outline
             if (ProfileManager.isActiveProfile(profile)) {
@@ -278,7 +296,7 @@ class ProfileScreen(private val parent: Screen?) : Screen(Component.translatable
 
             // Name + pack count, two lines centered around the row middle
             val nameX = leftEdge + iconSize + 4
-            val maxTextWidth = starButton.x - 4 - nameX
+            val maxTextWidth = updateButton.x - 4 - nameX
             val nameColor = if (hovered) 0xFFFFFF55.toInt() else 0xFFFFFFFF.toInt()
             context.text(font, Component.literal(ScreenUtils.truncate(font, profile.name, maxTextWidth)), nameX, centerY - 9, nameColor, true)
 

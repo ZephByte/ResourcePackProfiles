@@ -23,6 +23,17 @@
   "tooltip.resourcepackprofiles.edit": "Edit Profile",
   "tooltip.resourcepackprofiles.delete": "Delete Profile",
   "tooltip.resourcepackprofiles.remove_icon": "Remove Icon",
+  "tooltip.resourcepackprofiles.check_updates": "Check Packs for Updates",
+  "tooltip.resourcepackprofiles.check_all_updates": "Check All Profiles for Updates",
+  "tooltip.resourcepackprofiles.create_updated": "Downloads the selected updates and saves an updated copy of the profile. Your old packs and profiles are kept.",
+
+  "screen.resourcepackprofiles.updates.title": "Pack Updates",
+  "button.resourcepackprofiles.create_updated": "Create Updated Copy",
+  "label.resourcepackprofiles.updates_checking": "Checking Modrinth...",
+  "label.resourcepackprofiles.updates_downloading": "Downloading updates...",
+  "label.resourcepackprofiles.updates_none": "No updates found",
+  "label.resourcepackprofiles.updates_summary": "%s up to date | %s not on Modrinth | %s no version for this game version",
+  "label.resourcepackprofiles.updates_error": "Error: %s",
 
   "label.resourcepackprofiles.no_profiles": "No profiles saved",
   "label.resourcepackprofiles.pack_count": "%s packs",

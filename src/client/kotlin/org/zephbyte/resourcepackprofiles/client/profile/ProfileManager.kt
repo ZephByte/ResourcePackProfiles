@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory
 import org.zephbyte.resourcepackprofiles.client.util.FileDialogs
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 
 private data class ConfigData(
     val profiles: List<ResourcePackProfile> = emptyList(),
@@ -124,6 +125,43 @@ object ProfileManager {
         lastActiveProfileName = name
         save()
         ProfileIconManager.invalidate(name)
+    }
+
+    /**
+     * Saves a copy of [sourceName] named "<source> (updated)" (numbered if taken) with each id in
+     * [replacements] swapped for its new pack id, preserving order. The source profile is left
+     * untouched so it keeps working with the old pack files. [packIds] is passed in rather than
+     * read from the source so callers can fork unsaved edits. Returns the new profile's name.
+     */
+    fun createUpdatedProfile(sourceName: String, packIds: List<String>, replacements: Map<String, String>): String {
+        val suffix = " (updated)"
+        // Leave room for the suffix and a counter within the 64-char name limit.
+        val base = sourceName.take(64 - suffix.length - 4)
+        var name = base + suffix
+        var counter = 2
+        while (name in profiles) name = "$base$suffix ${counter++}"
+
+        var iconFile: String? = null
+        val sourceIcon = profiles[sourceName]?.customIcon
+        if (sourceIcon != null) {
+            try {
+                val from = iconsDir.resolve(sourceIcon)
+                if (Files.exists(from)) {
+                    val fileName = "${ProfileIconManager.sanitizeFileName(name)}.png"
+                    Files.copy(from, iconsDir.resolve(fileName), StandardCopyOption.REPLACE_EXISTING)
+                    iconFile = fileName
+                }
+            } catch (e: Exception) {
+                logger.error("Failed to copy custom icon for updated profile '{}'", name, e)
+            }
+        }
+
+        val updatedIds = packIds.map { replacements[it] ?: it }.distinct()
+        profiles[name] = ResourcePackProfile(name, updatedIds, iconFile, false)
+        save()
+        ProfileIconManager.invalidate(name)
+        logger.info("Created updated profile '{}' from '{}'", name, sourceName)
+        return name
     }
 
     fun deleteProfile(name: String) {

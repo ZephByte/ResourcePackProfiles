@@ -1,5 +1,24 @@
 # Changelog
 
+## Resource Pack Profiles - v1.1.0
+
+Adds a **pack update checker** to **Resource Pack Profiles** for Minecraft 26.1, 26.2, and 26.3.
+
+### Changes
+- **Update checker** - check a single pack (in the profile editor), a whole profile, or every profile for newer versions on Modrinth using the new ↻ buttons
+- **Safe updates** - updated packs are downloaded as new files and saved as an `(updated)` copy of the profile, so your existing packs and profiles keep working
+- **Verified downloads** - files are only downloaded from Modrinth and checked against their published SHA-512 before use
+- **Profile editor** - returning from the update screen keeps your unsaved edits
+
+Packs that are not on Modrinth, and unzipped folder packs, are skipped. Nothing is checked until you click a ↻ button.
+
+### Requirements
+| Minecraft | Fabric Loader | Fabric API | Fabric Language Kotlin | Mod Menu *(optional)* |
+|---|---|---|---|---|
+| 26.3 | 0.19.5+ | 0.161.0+26.3 | 1.14.1+kotlin.2.4.20 | 21.0.0-beta.1 |
+| 26.2 | 0.19.3+ | 0.152.2+26.2 | 1.13.12+kotlin.2.4.0 | 20.0.0-beta.3 |
+| 26.1 - 26.1.2 | 0.19.3+ | 0.145.1+26.1 | 1.13.12+kotlin.2.4.0 | 18.0.0-beta.1 |
+
 ## Resource Pack Profiles - v1.0.0+26.3
 
 Minecraft 26.3 compatibility release of **Resource Pack Profiles**.

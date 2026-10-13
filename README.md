@@ -23,6 +23,7 @@ A client-side Fabric mod for saving, managing, and sharing named resource pack l
 - **Custom icons:** set an image for any profile. Profiles without one get an icon built from their packs' art.
 - **Import and export:** share profiles as `.rpprofile` files, a single JSON file with the pack list and custom icon.
 - **Missing packs:** profiles that reference packs you don't have are flagged, and can still be applied without them.
+- **Update checker:** check a single pack, a profile, or every profile for newer versions on Modrinth (the ↻ buttons). Updates are downloaded as new files and saved as an updated copy of the profile, so your old packs and profiles keep working.
 - **Accessibility:** the profile and pack lists use Minecraft's native widgets, so they support keyboard navigation and screen readers.
 
 ---

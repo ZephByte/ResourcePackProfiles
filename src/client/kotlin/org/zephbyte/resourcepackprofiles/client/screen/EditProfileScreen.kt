@@ -59,6 +59,11 @@ class EditProfileScreen(
     // extractRenderState doesn't call getProfiles().find every frame.
     private var profileForPreview: ResourcePackProfile? = null
 
+    // init() reruns when returning from a sub-screen (e.g. the updates screen), so the staged
+    // edits are loaded from the saved profile only once and kept across rebuilds.
+    private var stateLoaded = false
+    private var stagedName: String? = null
+
     // Layout constants — mirror the vanilla pack screen: two 200px-wide lists with an 8px gap
     // centred on the screen.
     private val entryHeight = 36
@@ -91,8 +96,11 @@ class EditProfileScreen(
             return
         }
         profileForPreview = profile
-        selectedPacks = profile.packIds.reversed().toMutableList()
-        wasActive = ProfileManager.isActiveProfile(profile)
+        if (!stateLoaded) {
+            selectedPacks = profile.packIds.reversed().toMutableList()
+            wasActive = ProfileManager.isActiveProfile(profile)
+            stateLoaded = true
+        }
         recomputeAvailable()
 
         val centerX = width / 2
@@ -112,7 +120,8 @@ class EditProfileScreen(
         // Name field at top
         nameField = EditBox(font, centerX - 100, 16, 200, 20, Component.translatable("field.resourcepackprofiles.profile_name"))
         nameField.setMaxLength(64)
-        nameField.value = originalName
+        nameField.value = stagedName ?: originalName
+        nameField.setResponder { stagedName = it }
         addRenderableWidget(nameField)
 
         // Change Icon button (stages a chosen file; applied on Done)
@@ -198,6 +207,15 @@ class EditProfileScreen(
     }
 
     private fun isPackMissing(packId: String): Boolean = packId !in allKnownPackIds
+
+    /** Only packs that are real files on disk can be matched against Modrinth. */
+    private fun canCheckUpdate(packId: String): Boolean = packId.startsWith("file/") && !isPackMissing(packId)
+
+    /** Checks one pack for updates; the updated copy is forked from the current (unsaved) edits. */
+    private fun checkPackUpdate(packId: String) {
+        val source = UpdateSource(originalName, selectedPacks.reversed())
+        minecraft.showScreen(UpdatesScreen(this, listOf(source), setOf(packId)))
+    }
 
     private fun resolvePackProfile(packId: String): Pack? =
         minecraft.resourcePackRepository.availablePacks.find { it.id == packId }
@@ -394,6 +412,10 @@ class EditProfileScreen(
             // Selected column: act on the hovered arrow region
             val index = listIndex
             if (index !in selectedPacks.indices) return false
+            if (canCheckUpdate(packId) && isOverUpdateButton(mx, my)) {
+                checkPackUpdate(packId)
+                return true
+            }
             when (getHoveredArrowRegion(mx, my, iconX, iconY)) {
                 ArrowRegion.UNSELECT -> {
                     removePackAt(index)
@@ -404,6 +426,15 @@ class EditProfileScreen(
                 ArrowRegion.NONE -> {}
             }
             return false
+        }
+
+        private fun updateButtonX() = contentRight - iconInset - UPDATE_BUTTON_SIZE
+        private fun updateButtonY() = (y + height / 2) - UPDATE_BUTTON_SIZE / 2
+
+        private fun isOverUpdateButton(mx: Int, my: Int): Boolean {
+            val bx = updateButtonX()
+            val by = updateButtonY()
+            return mx >= bx && mx < bx + UPDATE_BUTTON_SIZE && my >= by && my < by + UPDATE_BUTTON_SIZE
         }
 
         override fun keyPressed(event: KeyEvent): Boolean {
@@ -465,9 +496,16 @@ class EditProfileScreen(
             val missing = isSelectedList && isPackMissing(packId)
             val displayName = packProfile?.title?.string ?: packId
             val textX = iconX + packIconSize + 4
-            val maxTextWidth = contentRight - iconInset - textX
+            val showUpdateButton = isSelectedList && canCheckUpdate(packId)
+            val maxTextWidth = contentRight - iconInset - textX - (if (showUpdateButton) UPDATE_BUTTON_SIZE + 2 else 0)
             val nameColor = if (missing) 0xFFFF5555.toInt() else 0xFFFFFFFF.toInt()
             context.text(font, Component.literal(ScreenUtils.truncate(font, displayName, maxTextWidth)), textX, centerY - 9, nameColor, true)
+
+            if (showUpdateButton) {
+                val over = hovered && isOverUpdateButton(mouseX, mouseY)
+                context.text(font, Component.literal("↻"), updateButtonX() + 2, updateButtonY() + 2,
+                    if (over) 0xFFFFFF55.toInt() else 0xFFAAAAAA.toInt(), true)
+            }
 
             val description = if (missing) Component.translatable("label.resourcepackprofiles.pack_missing").string else packProfile?.description?.string ?: ""
             if (description.isNotEmpty()) {
@@ -479,5 +517,6 @@ class EditProfileScreen(
 
     private companion object {
         const val PREVIEW_KEY = "staged"
+        const val UPDATE_BUTTON_SIZE = 12
     }
 }
