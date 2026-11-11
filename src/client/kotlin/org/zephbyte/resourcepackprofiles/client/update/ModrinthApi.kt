@@ -28,6 +28,7 @@ data class ApiVersion(
     @SerializedName("project_id") val projectId: String = "",
     @SerializedName("version_number") val versionNumber: String = "",
     @SerializedName("date_published") val datePublished: String = "",
+    @SerializedName("game_versions") val gameVersions: List<String> = emptyList(),
     val name: String = "",
     val files: List<ApiFile> = emptyList()
 )
@@ -84,6 +85,24 @@ object ModrinthApi {
         val type = object : TypeToken<List<ApiProject>>() {}.type
         val projects: List<ApiProject> = gson.fromJson(send(request), type) ?: emptyList()
         return projects.associate { it.id to it.title }
+    }
+
+    /** Fetches versions by their Modrinth version id. Unknown ids are absent from the result. */
+    fun versionsByIds(ids: Collection<String>): List<ApiVersion> {
+        if (ids.isEmpty()) return emptyList()
+        val encoded = URLEncoder.encode(gson.toJson(ids.distinct()), StandardCharsets.UTF_8)
+        val request = baseRequest("/versions?ids=$encoded").GET().build()
+        val type = object : TypeToken<List<ApiVersion>>() {}.type
+        return gson.fromJson(send(request), type) ?: emptyList()
+    }
+
+    /** Every resource pack version of a project, in whatever order Modrinth returns them. */
+    fun projectVersions(projectId: String): List<ApiVersion> {
+        val loaders = URLEncoder.encode("[\"minecraft\"]", StandardCharsets.UTF_8)
+        val id = URLEncoder.encode(projectId, StandardCharsets.UTF_8)
+        val request = baseRequest("/project/$id/version?loaders=$loaders").GET().build()
+        val type = object : TypeToken<List<ApiVersion>>() {}.type
+        return gson.fromJson(send(request), type) ?: emptyList()
     }
 
     /** Opens a streaming GET for [url]. The caller must close the stream. */

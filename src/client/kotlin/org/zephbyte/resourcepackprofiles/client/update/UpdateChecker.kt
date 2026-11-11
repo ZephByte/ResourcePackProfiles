@@ -19,8 +19,23 @@ data class PackUpdate(
     val newVersion: String,
     val fileName: String,
     val url: String,
-    val sha512: String
+    val sha512: String,
+    /** Modrinth version id of the file this downloads. */
+    val versionId: String
 )
+
+/**
+ * Result of [UpdateChecker.check]. [identities] maps each pack that Modrinth recognised to the
+ * version id of the file currently installed.
+ */
+class CheckReport(val checks: Map<String, PackCheck>, val identities: Map<String, String>)
+
+/**
+ * One version of a pack that the user can switch to. [update] carries what to download;
+ * [compatible] is whether it supports the running game version; [current] marks the version
+ * that is installed right now.
+ */
+class VersionChoice(val update: PackUpdate, val compatible: Boolean, val current: Boolean)
 
 /** Result of checking one installed pack. */
 sealed interface PackCheck {
@@ -49,8 +64,9 @@ object UpdateChecker {
     }
 
     /** Checks each pack in [packIds] against Modrinth. Blocking; call off the render thread. */
-    fun check(packIds: Collection<String>): Map<String, PackCheck> {
+    fun check(packIds: Collection<String>): CheckReport {
         val results = mutableMapOf<String, PackCheck>()
+        val identities = mutableMapOf<String, String>()
         val hashById = mutableMapOf<String, String>()
         for (id in packIds.distinct()) {
             val file = packFile(id)
@@ -65,7 +81,7 @@ object UpdateChecker {
                 results[id] = PackCheck.Unavailable
             }
         }
-        if (hashById.isEmpty()) return results
+        if (hashById.isEmpty()) return CheckReport(results, identities)
 
         val hashes = hashById.values.toSet()
         val known = ModrinthApi.versionsByHash(hashes)
@@ -78,6 +94,7 @@ object UpdateChecker {
                 results[id] = PackCheck.NotOnModrinth
                 continue
             }
+            identities[id] = current.id
             val newest = latest[hash]
             if (newest == null) {
                 results[id] = PackCheck.NoCompatibleVersion
@@ -100,11 +117,85 @@ object UpdateChecker {
                     newVersion = newest.versionNumber,
                     fileName = file.filename,
                     url = file.url,
-                    sha512 = sha512.lowercase()
+                    sha512 = sha512.lowercase(),
+                    versionId = newest.id
                 )
             )
         }
-        return results
+        return CheckReport(results, identities)
+    }
+
+    /**
+     * Looks up which Modrinth version each installed pack in [packIds] is, without checking for
+     * updates. Packs that are not files or not on Modrinth are absent. Blocking.
+     */
+    fun identify(packIds: Collection<String>): Map<String, String> {
+        val hashById = mutableMapOf<String, String>()
+        for (id in packIds.distinct()) {
+            val file = packFile(id) ?: continue
+            try {
+                hashById[id] = hash(file, "SHA-1")
+            } catch (e: IOException) {
+                logger.warn("Could not hash pack {}", id, e)
+            }
+        }
+        val known = ModrinthApi.versionsByHash(hashById.values.toSet())
+        return hashById.mapNotNull { (id, hash) -> known[hash]?.let { id to it.id } }.toMap()
+    }
+
+    /**
+     * Lists every version of the pack behind [packId], newest first, or null if the pack is not on
+     * Modrinth. [knownVersionId] is the version id already recorded for the installed file, which
+     * saves hashing it again. Blocking.
+     */
+    fun listVersions(packId: String, knownVersionId: String?): List<VersionChoice>? {
+        val currentId = knownVersionId ?: identify(listOf(packId))[packId] ?: return null
+        val current = ModrinthApi.versionsByIds(listOf(currentId)).firstOrNull() ?: return null
+        val title = ModrinthApi.projectTitles(listOf(current.projectId))[current.projectId] ?: current.name
+        val game = gameVersion()
+        return ModrinthApi.projectVersions(current.projectId)
+            .sortedByDescending { it.datePublished }
+            .mapNotNull { version ->
+                val file = version.files.firstOrNull { it.primary } ?: version.files.firstOrNull() ?: return@mapNotNull null
+                val sha512 = file.hashes["sha512"] ?: return@mapNotNull null
+                VersionChoice(
+                    PackUpdate(
+                        packId = packId,
+                        projectTitle = title,
+                        currentVersion = current.versionNumber,
+                        newVersion = version.versionNumber,
+                        fileName = file.filename,
+                        url = file.url,
+                        sha512 = sha512.lowercase(),
+                        versionId = version.id
+                    ),
+                    compatible = game in version.gameVersions,
+                    current = version.id == current.id
+                )
+            }
+    }
+
+    /**
+     * Resolves missing packs to downloads. [sources] maps each missing pack id to the Modrinth
+     * version id recorded for it; packs whose version no longer exists are absent. Blocking.
+     */
+    fun resolveMissing(sources: Map<String, String>): List<PackUpdate> {
+        val versions = ModrinthApi.versionsByIds(sources.values).associateBy { it.id }
+        return sources.mapNotNull { (packId, versionId) ->
+            val version = versions[versionId] ?: return@mapNotNull null
+            val file = version.files.firstOrNull { it.primary } ?: version.files.firstOrNull() ?: return@mapNotNull null
+            val sha512 = file.hashes["sha512"] ?: return@mapNotNull null
+            PackUpdate(
+                packId = packId,
+                projectTitle = version.name,
+                currentVersion = version.versionNumber,
+                newVersion = version.versionNumber,
+                fileName = file.filename,
+                url = file.url,
+                sha512 = sha512.lowercase(),
+                versionId = version.id
+            )
+        }
     }
 
     /**
@@ -148,6 +239,20 @@ object UpdateChecker {
         }
         logger.info("Downloaded pack update {}", target.fileName)
         return "file/${target.fileName}"
+    }
+
+    /**
+     * Copies a resource pack zip dropped onto the GUI into the resourcepacks folder. Returns the
+     * installed file name, or null if [source] is not a zip or a file of that name already exists.
+     */
+    fun installPack(source: Path): String? {
+        val name = source.fileName?.toString() ?: return null
+        if (!name.lowercase().endsWith(".zip") || !Files.isRegularFile(source)) return null
+        Files.createDirectories(packsDir)
+        val target = packsDir.resolve(name)
+        if (Files.exists(target)) return null
+        Files.copy(source, target)
+        return name
     }
 
     private fun hash(file: Path, algorithm: String): String {
