@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import net.minecraft.client.Minecraft
 import org.slf4j.LoggerFactory
+import org.zephbyte.resourcepackprofiles.client.update.UpdateChecker
 import org.zephbyte.resourcepackprofiles.client.util.FileDialogs
 import java.nio.file.Files
 import java.nio.file.Path
@@ -11,15 +12,30 @@ import java.nio.file.StandardCopyOption
 
 private data class ConfigData(
     val profiles: List<ResourcePackProfile> = emptyList(),
-    val lastActiveProfile: String? = null
+    val lastActiveProfile: String? = null,
+    /** Context key ("server:<address>" / "world:<name>") -> profile to apply on joining it. */
+    val autoApply: Map<String, String>? = null,
+    /** Whether the profile screen opens in place of the vanilla resource pack screen. Null = default (on). */
+    val replaceVanillaScreen: Boolean? = null,
+    /** "ask" (default), "always" or "never": whether Update All backs the profile up first. */
+    val backupOnUpdateAll: String? = null,
+    /** Whether packs are checked for updates automatically. Null until the user has been asked. */
+    val autoCheckUpdates: Boolean? = null
 )
 
 private data class ExportData(
     val name: String,
     val packIds: List<String>,
     val favorite: Boolean = false,
-    val customIcon: String? = null
+    val customIcon: String? = null,
+    val disabledPackIds: List<String>? = null,
+    val packSources: Map<String, String>? = null
 )
+
+/** Whether "Update All" saves a backup copy of the profile first. */
+enum class BackupChoice(val id: String) {
+    ASK("ask"), ALWAYS("always"), NEVER("never")
+}
 
 /** Outcome of importing a profile from a file. */
 sealed interface ImportResult {
@@ -40,15 +56,26 @@ object ProfileManager {
     private const val PROFILE_FILTER_DESC = "Resource Pack Profile (*.rpprofile)"
     private val profiles = mutableMapOf<String, ResourcePackProfile>()
     private var lastActiveProfileName: String? = null
+    private val autoApply = mutableMapOf<String, String>()
+    private var replaceVanillaScreen = true
+    private var backupOnUpdateAll = BackupChoice.ASK
+    private var autoCheckUpdates: Boolean? = null
+    // One-shot escape hatch so the vanilla screen can still be opened on request.
+    private var allowVanillaScreenOnce = false
 
     fun load() {
         profiles.clear()
+        autoApply.clear()
         if (Files.exists(configPath)) {
             try {
                 val json = Files.readString(configPath)
                 val config: ConfigData = gson.fromJson(json, ConfigData::class.java)
                 config.profiles.forEach { profiles[it.name] = it }
                 lastActiveProfileName = config.lastActiveProfile
+                config.autoApply?.let { autoApply.putAll(it) }
+                replaceVanillaScreen = config.replaceVanillaScreen ?: true
+                backupOnUpdateAll = BackupChoice.entries.firstOrNull { it.id == config.backupOnUpdateAll } ?: BackupChoice.ASK
+                autoCheckUpdates = config.autoCheckUpdates
                 logger.info("Loaded {} profile(s) from config", profiles.size)
             } catch (e: Exception) {
                 logger.error("Failed to load profiles config", e)
@@ -60,14 +87,67 @@ object ProfileManager {
     private fun save() {
         try {
             Files.createDirectories(configPath.parent)
-            val config = ConfigData(profiles.values.toList(), lastActiveProfileName)
+            val config = ConfigData(
+                profiles.values.toList(), lastActiveProfileName, autoApply.toMap().ifEmpty { null }, replaceVanillaScreen,
+                backupOnUpdateAll.id, autoCheckUpdates
+            )
             Files.writeString(configPath, gson.toJson(config))
         } catch (e: Exception) {
             logger.error("Failed to save profiles config", e)
         }
     }
 
+    // --- Automatic update checks ---
+
+    /** True/false once the user has chosen; null while the first-run question is still pending. */
+    fun autoCheckSetting(): Boolean? = autoCheckUpdates
+
+    fun setAutoCheckUpdates(enabled: Boolean) {
+        autoCheckUpdates = enabled
+        save()
+    }
+
+    // --- Backup before Update All ---
+
+    fun backupOnUpdateAll(): BackupChoice = backupOnUpdateAll
+
+    fun setBackupOnUpdateAll(choice: BackupChoice) {
+        backupOnUpdateAll = choice
+        save()
+    }
+
+    // --- Replacing the vanilla resource pack screen ---
+
+    fun replacesVanillaScreen(): Boolean = replaceVanillaScreen
+
+    fun setReplacesVanillaScreen(enabled: Boolean) {
+        replaceVanillaScreen = enabled
+        save()
+    }
+
+    /** Lets the next vanilla resource pack screen open normally even when replacement is on. */
+    fun allowVanillaScreenOnce() {
+        allowVanillaScreenOnce = true
+    }
+
+    /**
+     * Called when a vanilla resource pack screen opens: true if the profile screen should take
+     * its place. Consumes the one-shot allowance set by [allowVanillaScreenOnce].
+     */
+    fun consumeReplaceVanillaScreen(): Boolean {
+        if (allowVanillaScreenOnce) {
+            allowVanillaScreenOnce = false
+            return false
+        }
+        return replaceVanillaScreen
+    }
+
     fun hasProfile(name: String): Boolean = name in profiles
+
+    fun getProfile(name: String): ResourcePackProfile? = profiles[name]
+
+    /** Name of the profile most recently applied or saved from the current packs, if any. */
+    fun lastAppliedName(): String? = lastActiveProfileName
 
     fun getProfiles(): List<ResourcePackProfile> {
         return profiles.values.sortedWith(
@@ -127,41 +207,75 @@ object ProfileManager {
         ProfileIconManager.invalidate(name)
     }
 
-    /**
-     * Saves a copy of [sourceName] named "<source> (updated)" (numbered if taken) with each id in
-     * [replacements] swapped for its new pack id, preserving order. The source profile is left
-     * untouched so it keeps working with the old pack files. [packIds] is passed in rather than
-     * read from the source so callers can fork unsaved edits. Returns the new profile's name.
-     */
-    fun createUpdatedProfile(sourceName: String, packIds: List<String>, replacements: Map<String, String>): String {
-        val suffix = " (updated)"
-        // Leave room for the suffix and a counter within the 64-char name limit.
-        val base = sourceName.take(64 - suffix.length - 4)
-        var name = base + suffix
-        var counter = 2
-        while (name in profiles) name = "$base$suffix ${counter++}"
+    /** Saves a copy of [name] as "<name><suffix>" (numbered if taken) and returns the new name. */
+    fun duplicateProfile(name: String, suffix: String = " (copy)"): String? {
+        val source = profiles[name] ?: return null
+        val copyName = uniqueName(name, suffix)
+        profiles[copyName] = source.copy(name = copyName, customIcon = copyIcon(source, copyName), favorite = false)
+        save()
+        ProfileIconManager.invalidate(copyName)
+        return copyName
+    }
 
-        var iconFile: String? = null
-        val sourceIcon = profiles[sourceName]?.customIcon
-        if (sourceIcon != null) {
+    /** Saves the currently enabled packs as a new profile with a generated name and returns it. */
+    fun createFromCurrent(): String {
+        val name = uniqueName("New profile", "")
+        saveCurrentAsProfile(name)
+        return name
+    }
+
+    /** Custom icon file contents for [profile], or null if it has none. Used to undo a delete. */
+    fun readCustomIcon(profile: ResourcePackProfile): ByteArray? {
+        val file = profile.customIcon ?: return null
+        return try {
+            iconsDir.resolve(file).takeIf { Files.exists(it) }?.let { Files.readAllBytes(it) }
+        } catch (e: Exception) {
+            logger.error("Failed to read custom icon for '{}'", profile.name, e)
+            null
+        }
+    }
+
+    /** Puts back a deleted [profile], rewriting its custom icon from [iconBytes] if it had one. */
+    fun restoreProfile(profile: ResourcePackProfile, iconBytes: ByteArray?) {
+        if (profile.name in profiles) return
+        var restored = profile
+        if (profile.customIcon != null) {
             try {
-                val from = iconsDir.resolve(sourceIcon)
-                if (Files.exists(from)) {
-                    val fileName = "${ProfileIconManager.sanitizeFileName(name)}.png"
-                    Files.copy(from, iconsDir.resolve(fileName), StandardCopyOption.REPLACE_EXISTING)
-                    iconFile = fileName
-                }
+                if (iconBytes == null) throw java.io.IOException("icon data unavailable")
+                Files.createDirectories(iconsDir)
+                Files.write(iconsDir.resolve(profile.customIcon), iconBytes)
             } catch (e: Exception) {
-                logger.error("Failed to copy custom icon for updated profile '{}'", name, e)
+                logger.error("Failed to restore custom icon for '{}'", profile.name, e)
+                restored = profile.copy(customIcon = null)
             }
         }
-
-        val updatedIds = packIds.map { replacements[it] ?: it }.distinct()
-        profiles[name] = ResourcePackProfile(name, updatedIds, iconFile, false)
+        profiles[profile.name] = restored
         save()
-        ProfileIconManager.invalidate(name)
-        logger.info("Created updated profile '{}' from '{}'", name, sourceName)
+        ProfileIconManager.invalidate(profile.name)
+    }
+
+    /** "<base><suffix>", numbered if taken, trimmed to fit the 64-char profile name limit. */
+    private fun uniqueName(base: String, suffix: String): String {
+        val trimmed = base.take(64 - suffix.length - 4)
+        var name = trimmed + suffix
+        var counter = 2
+        while (name in profiles) name = "$trimmed$suffix ${counter++}"
         return name
+    }
+
+    /** Copies [source]'s custom icon file for a profile named [newName]; returns the new file name. */
+    private fun copyIcon(source: ResourcePackProfile?, newName: String): String? {
+        val sourceIcon = source?.customIcon ?: return null
+        return try {
+            val from = iconsDir.resolve(sourceIcon)
+            if (!Files.exists(from)) return null
+            val fileName = "${ProfileIconManager.sanitizeFileName(newName)}.png"
+            Files.copy(from, iconsDir.resolve(fileName), StandardCopyOption.REPLACE_EXISTING)
+            fileName
+        } catch (e: Exception) {
+            logger.error("Failed to copy custom icon for profile '{}'", newName, e)
+            null
+        }
     }
 
     fun deleteProfile(name: String) {
@@ -170,14 +284,107 @@ object ProfileManager {
             ProfileIconManager.deleteCustomIcon(profile)
         }
         if (lastActiveProfileName == name) lastActiveProfileName = null
+        autoApply.values.removeIf { it == name }
         save()
     }
 
     fun updateProfile(name: String, newPackIds: List<String>) {
         val profile = profiles[name] ?: return
-        profiles[name] = profile.copy(packIds = newPackIds)
+        val disabled = profile.disabledPackIds?.filter { it in newPackIds }?.ifEmpty { null }
+        profiles[name] = profile.copy(packIds = newPackIds, disabledPackIds = disabled)
         save()
         ProfileIconManager.invalidate(name)
+    }
+
+    /** Overwrites the stored profile of the same name with [profile]. Used to undo an edit. */
+    fun putProfile(profile: ResourcePackProfile) {
+        if (profile.name !in profiles) return
+        profiles[profile.name] = profile
+        save()
+        ProfileIconManager.invalidate(profile.name)
+    }
+
+    /** Turns a pack off (or back on) inside a profile without removing it from the order. */
+    fun setPackDisabled(name: String, packId: String, disabled: Boolean) {
+        val profile = profiles[name] ?: return
+        val current = profile.disabledPackIds.orEmpty()
+        val updated = if (disabled) (current + packId).distinct() else current - packId
+        profiles[name] = profile.copy(disabledPackIds = updated.ifEmpty { null })
+        save()
+    }
+
+    /**
+     * Swaps pack ids in one profile in place, keeping order and disabled state. [newSources] maps
+     * the new ids to their Modrinth version ids. With [rememberPrevious], each new pack records the
+     * one it replaced so the switch can be reverted later.
+     */
+    fun replacePackIds(
+        name: String,
+        replacements: Map<String, String>,
+        newSources: Map<String, String> = emptyMap(),
+        rememberPrevious: Boolean = false,
+        carrySources: Boolean = true
+    ) {
+        val profile = profiles[name] ?: return
+        val newIds = profile.packIds.map { replacements[it] ?: it }.distinct()
+        // A missing pack re-downloaded under another file name is still the same version, so its
+        // recorded source moves to the new id ([carrySources]). A version switch is a different
+        // version: the old source is dropped and [newSources] supplies the new one, if known.
+        val carried =
+            if (carrySources) profile.packSources.orEmpty().mapKeys { replacements[it.key] ?: it.key }
+            else profile.packSources.orEmpty() - replacements.keys
+        val sources = (carried + newSources).filterKeys { it in newIds }
+        var previous = profile.previousPacks.orEmpty()
+        if (rememberPrevious) previous = previous + replacements.map { (old, new) -> new to old }
+        previous = previous.filterKeys { it in newIds }
+        profiles[name] = profile.copy(
+            packIds = newIds,
+            disabledPackIds = profile.disabledPackIds?.map { replacements[it] ?: it }?.distinct(),
+            packSources = sources.ifEmpty { null },
+            previousPacks = previous.ifEmpty { null }
+        )
+        save()
+        ProfileIconManager.invalidate(name)
+    }
+
+    /**
+     * Remembers which Modrinth version each pack in [sources] is, on every profile containing it,
+     * so the pack can be downloaded again if its file goes missing or the profile is shared.
+     */
+    fun recordSources(sources: Map<String, String>) {
+        if (sources.isEmpty()) return
+        var changed = false
+        for ((name, profile) in profiles.toMap()) {
+            val relevant = sources.filterKeys { it in profile.packIds }
+            val merged = profile.packSources.orEmpty() + relevant
+            if (merged != profile.packSources.orEmpty()) {
+                profiles[name] = profile.copy(packSources = merged)
+                changed = true
+            }
+        }
+        if (changed) save()
+    }
+
+    /** How many profiles contain each pack id. */
+    fun packUsage(): Map<String, Int> =
+        profiles.values.flatMap { it.packIds.distinct() }.groupingBy { it }.eachCount()
+
+    // --- Automatic switching (opt-in: nothing happens until a binding is added) ---
+
+    fun autoApplyProfile(contextKey: String): ResourcePackProfile? = autoApply[contextKey]?.let { profiles[it] }
+
+    /** Binds [contextKey] to [profileName], or removes the binding when [profileName] is null. */
+    fun setAutoApply(contextKey: String, profileName: String?) {
+        if (profileName == null) autoApply.remove(contextKey) else autoApply[contextKey] = profileName
+        save()
+    }
+
+    /** Context keys that auto-apply [profileName]. */
+    fun autoApplyContexts(profileName: String): List<String> =
+        autoApply.filterValues { it == profileName }.keys.sorted()
+
+    fun clearAutoApply(profileName: String) {
+        if (autoApply.values.removeIf { it == profileName }) save()
     }
 
     fun renameProfile(oldName: String, newName: String): Boolean {
@@ -203,6 +410,7 @@ object ProfileManager {
         }
 
         if (lastActiveProfileName == oldName) lastActiveProfileName = newName
+        autoApply.replaceAll { _, bound -> if (bound == oldName) newName else bound }
         ProfileIconManager.invalidate(oldName)
         save()
         return true
@@ -228,7 +436,7 @@ object ProfileManager {
         val client = Minecraft.getInstance()
         val currentUserPacks = getUserPacks(client.options.resourcePacks.toList())
         val availableIds = client.resourcePackRepository.availablePacks.map { it.id }.toSet()
-        val profileValidPacks = getUserPacks(profile.packIds).filter { it in availableIds }
+        val profileValidPacks = getUserPacks(profile.enabledPackIds()).filter { it in availableIds }
         return profileValidPacks == currentUserPacks
     }
 
@@ -242,11 +450,14 @@ object ProfileManager {
 
         return try {
             val iconBase64 = ProfileIconManager.encodeIconToBase64(profile)
+            val sources = profile.packSources.orEmpty() + identifyForExport(profile)
             val exportData = ExportData(
                 name = profile.name,
                 packIds = profile.packIds,
                 favorite = profile.favorite,
-                customIcon = iconBase64
+                customIcon = iconBase64,
+                disabledPackIds = profile.disabledPackIds,
+                packSources = sources.ifEmpty { null }
             )
             Files.writeString(Path.of(path), gson.toJson(exportData))
             logger.info("Exported profile '{}' to {}", profile.name, path)
@@ -257,6 +468,21 @@ object ProfileManager {
         }
     }
 
+    /**
+     * Asks Modrinth which version each not-yet-identified pack is, so the exported file lets the
+     * recipient download packs they don't have. Best effort: export still works offline.
+     */
+    private fun identifyForExport(profile: ResourcePackProfile): Map<String, String> {
+        val unknown = profile.packIds.filter { profile.packSources?.containsKey(it) != true }
+        if (unknown.isEmpty()) return emptyMap()
+        return try {
+            UpdateChecker.identify(unknown)
+        } catch (e: Exception) {
+            logger.warn("Could not look up pack sources for export: {}", e.message)
+            emptyMap()
+        }
+    }
+
     /** Opens a file dialog and imports the selected profile. Blocks, so call off the render thread. */
     fun pickProfileToImport(): String? =
         FileDialogs.openFile("Import Profile", profileFilters, PROFILE_FILTER_DESC)
@@ -264,16 +490,18 @@ object ProfileManager {
     /**
      * Imports a profile from [filePath]. If [overwriteName] is null and a profile with the file's
      * name already exists, returns [ImportResult.Conflict] without writing anything; pass the name
-     * back as [overwriteName] to confirm the overwrite.
+     * back as [overwriteName] to confirm the overwrite. With [renameOnConflict], a clashing import
+     * is saved under a numbered name instead of reporting a conflict.
      */
-    fun importProfileFromPath(filePath: Path, overwriteName: String? = null): ImportResult {
+    fun importProfileFromPath(filePath: Path, overwriteName: String? = null, renameOnConflict: Boolean = false): ImportResult {
         return try {
             val json = Files.readString(filePath)
             val data: ExportData = gson.fromJson(json, ExportData::class.java)
-            val name = overwriteName ?: data.name
+            var name = overwriteName ?: data.name
 
             if (overwriteName == null && hasProfile(name)) {
-                return ImportResult.Conflict(name)
+                if (!renameOnConflict) return ImportResult.Conflict(name)
+                name = uniqueName(name, "")
             }
 
             // Capture old icon filename before overwriting — used for cleanup after a successful
@@ -283,7 +511,9 @@ object ProfileManager {
             profiles[name] = ResourcePackProfile(
                 name = name,
                 packIds = data.packIds,
-                favorite = data.favorite
+                favorite = data.favorite,
+                disabledPackIds = data.disabledPackIds?.filter { it in data.packIds }?.ifEmpty { null },
+                packSources = data.packSources?.filterKeys { it in data.packIds }?.ifEmpty { null }
             )
 
             if (data.customIcon != null) {
@@ -317,28 +547,29 @@ object ProfileManager {
         val client = Minecraft.getInstance()
         val availableIds = client.resourcePackRepository.availablePacks.map { it.id }.toSet()
 
-        val missingIds = profile.packIds.filter { it !in availableIds }
+        // Disabled packs are skipped on purpose, so they don't count as missing either.
+        val enabledIds = profile.enabledPackIds()
+        val missingIds = enabledIds.filter { it !in availableIds }
         if (missingIds.isNotEmpty()) {
             logger.warn("Profile '{}' is missing packs: {}", profile.name, missingIds)
         }
 
         // Strip required/non-auto packs so builtinPacks + validUserPacks never contains duplicates
         // (an imported profile could legally include a required pack id in its list).
-        val validUserPacks = getUserPacks(profile.packIds.filter { it in availableIds })
+        val validUserPacks = getUserPacks(enabledIds.filter { it in availableIds })
 
         // Preserve built-in/required packs that are always present
         val builtinPacks = client.options.resourcePacks.filter { it !in getUserPacks(client.options.resourcePacks.toList()) }
         val fullPackList = builtinPacks + validUserPacks
         logger.debug("Applying profile '{}': valid user packs {}, built-in preserved {}", profile.name, validUserPacks, builtinPacks)
 
-        client.options.resourcePacks.clear()
-        client.options.resourcePacks.addAll(fullPackList)
-
-        client.options.save()
+        // Select in the repository, then let vanilla's own updateResourcePacks write the options,
+        // exactly as the vanilla pack screen does. Besides saving and reloading, it records
+        // outdated packs in options.incompatibleResourcePacks; without that, Minecraft drops
+        // every outdated pack from the selection at the next startup.
         client.resourcePackRepository.reload()
         client.resourcePackRepository.setSelected(fullPackList)
-
-        client.reloadResourcePacks()
+        client.options.updateResourcePacks(client.resourcePackRepository)
         lastActiveProfileName = profile.name
         save()
 
