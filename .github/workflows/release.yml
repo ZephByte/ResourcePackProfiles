@@ -1,5 +1,11 @@
 name: Release
 
+# One tag releases every Minecraft version Stonecutter builds (settings.gradle.kts).
+# Tag with the bare mod version from gradle.properties, e.g. `v2.0.0`. This creates one
+# GitHub Release holding a jar per Minecraft version, and one Modrinth/CurseForge
+# version per Minecraft version (e.g. v2.0.0+26.1, v2.0.0+26.2, v2.0.0+26.3).
+# The notes for all of them come from the first `## ` section of CHANGELOG.md.
+
 on:
   push:
     tags:
@@ -14,20 +20,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Resolve Minecraft version from tag
-        id: mc
+      - name: Check tag matches mod_base_version
         run: |
-          MC_VERSION="${GITHUB_REF_NAME#*+}"
           BASE_VERSION=$(grep '^mod_base_version=' gradle.properties | cut -d'=' -f2)
-          if [ "${GITHUB_REF_NAME}" != "${BASE_VERSION}+${MC_VERSION}" ]; then
+          if [ "${GITHUB_REF_NAME}" != "${BASE_VERSION}" ]; then
             echo "::error::Tag '${GITHUB_REF_NAME}' does not match mod_base_version '${BASE_VERSION}' in gradle.properties"
             exit 1
           fi
-          if [ ! -d "versions/${MC_VERSION}" ]; then
-            echo "::error::No versions/${MC_VERSION} directory for tag '${GITHUB_REF_NAME}'"
-            exit 1
-          fi
-          echo "version=${MC_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Java 25
         uses: actions/setup-java@v6
@@ -39,32 +38,49 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Build
-        run: ./gradlew :${{ steps.mc.outputs.version }}:build
+      # Bare task names run in every Stonecutter version subproject.
+      - name: Build all Minecraft versions
+        run: ./gradlew build
 
-      - name: Find release jar
-        id: jar
+      - name: Find release jars
+        id: jars
         run: |
-          JAR=$(find versions/${{ steps.mc.outputs.version }}/build/libs -name "*.jar" ! -name "*-dev.jar" ! -name "*-sources.jar")
-          echo "path=$JAR" >> $GITHUB_OUTPUT
+          JARS=$(find versions/*/build/libs -name "*-${GITHUB_REF_NAME}+*.jar" ! -name "*-dev.jar" ! -name "*-sources.jar" | sort)
+          EXPECTED=$(find versions -mindepth 1 -maxdepth 1 -type d | wc -l)
+          FOUND=$(echo "$JARS" | grep -c . || true)
+          if [ "$FOUND" -ne "$EXPECTED" ]; then
+            echo "::error::Expected ${EXPECTED} release jars (one per Minecraft version), found ${FOUND}"
+            exit 1
+          fi
+          echo "$JARS"
+          echo "paths<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$JARS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Extract changelog
         id: changelog
         run: |
           CONTENT=$(awk '/^## /{if(p) exit; p=1; next} p' CHANGELOG.md)
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          echo "$CONTENT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          if [ -z "$CONTENT" ]; then
+            echo "::error::No changelog section found in CHANGELOG.md"
+            exit 1
+          fi
+          echo "content<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CONTENT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          name: Resource Pack Profiles ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.content }}
-          files: ${{ steps.jar.outputs.path }}
+          files: ${{ steps.jars.outputs.paths }}
+          fail_on_unmatched_files: true
           prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
 
+      # Publishes each Minecraft version as its own Modrinth and CurseForge version.
       - name: Publish to Modrinth and CurseForge
-        run: ./gradlew :${{ steps.mc.outputs.version }}:publishMods
+        run: ./gradlew publishMods
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
           CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
