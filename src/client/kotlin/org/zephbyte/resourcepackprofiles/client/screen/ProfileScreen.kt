@@ -1,6 +1,7 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
 import com.mojang.blaze3d.platform.InputConstants
+import net.minecraft.ChatFormatting
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.components.EditBox
@@ -27,9 +28,13 @@ import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
 import org.zephbyte.resourcepackprofiles.client.ui.FlatButton
 import org.zephbyte.resourcepackprofiles.client.ui.Icon
 import org.zephbyte.resourcepackprofiles.client.ui.Theme
+import org.zephbyte.resourcepackprofiles.client.update.DownloadOutcome
+import org.zephbyte.resourcepackprofiles.client.update.DownloadProgress
 import org.zephbyte.resourcepackprofiles.client.update.PackCheck
 import org.zephbyte.resourcepackprofiles.client.update.PackUpdate
+import org.zephbyte.resourcepackprofiles.client.update.ProjectHit
 import org.zephbyte.resourcepackprofiles.client.update.UpdateChecker
+import org.zephbyte.resourcepackprofiles.client.update.VersionChoice
 import org.zephbyte.resourcepackprofiles.client.util.DynamicTextureCache
 import org.zephbyte.resourcepackprofiles.client.util.FileDialogs
 import org.zephbyte.resourcepackprofiles.client.util.ScreenUtils
@@ -109,6 +114,8 @@ class ProfileScreen @JvmOverloads constructor(
     private val checks = SESSION_CHECKS
     /** Non-null while a background check or download runs; shown in place of the status line. */
     private var busy: Component? = null
+    /** Per-file state of the running download batch, if any; drives the progress bar. */
+    @Volatile private var progress: DownloadProgress? = null
 
     private var status: Component? = null
     private var statusColor = Theme.TEXT_SECONDARY
@@ -662,26 +669,61 @@ class ProfileScreen @JvmOverloads constructor(
     private fun onImport() {
         Thread {
             val path = ProfileManager.pickProfileToImport() ?: return@Thread
-            Minecraft.getInstance().execute { importProfiles(listOf(Path.of(path))) }
+            Minecraft.getInstance().execute { offerMissingPacks(importProfiles(listOf(Path.of(path)))) }
         }.also { it.isDaemon = true }.start()
     }
 
-    private fun importProfiles(paths: List<Path>): Int {
-        var imported = 0
-        var last: String? = null
+    /** Imports each profile file and returns the names of the profiles that were added. */
+    private fun importProfiles(paths: List<Path>): List<String> {
+        val imported = mutableListOf<String>()
         for (path in paths) {
             val result = ProfileManager.importProfileFromPath(path, renameOnConflict = true)
-            if (result is ImportResult.Imported) {
-                imported++
-                last = result.name
-            }
+            if (result is ImportResult.Imported) imported.add(result.name)
         }
-        if (last != null) {
+        imported.lastOrNull()?.let {
             searchBox.value = ""
-            select(last)
+            select(it)
             rebuildProfileList()
         }
         return imported
+    }
+
+    /**
+     * After an import: offers to download the packs the new profiles use but this install lacks.
+     * Packs Modrinth can supply are listed in a dialog; packs it can't are only counted, since
+     * they must be added by hand. With nothing to download, a status line explains the gap.
+     */
+    private fun offerMissingPacks(profileNames: List<String>) {
+        if (profileNames.isEmpty()) return
+        refreshPackCache()
+        val profiles = profileNames.mapNotNull { ProfileManager.getProfile(it) }
+        val fetchable = profiles.flatMap { fetchableMissing(it).keys }.distinct()
+        val manual = profiles
+            .flatMap { p -> p.enabledPackIds().filter { it !in packsById && it !in p.packSources.orEmpty() } }
+            .distinct()
+        if (fetchable.isEmpty()) {
+            if (manual.isNotEmpty()) {
+                showError(t("status.resourcepackprofiles.import_missing_manual", packCount(manual.size)))
+            }
+            return
+        }
+
+        val intro =
+            if (profiles.size == 1) t("screen.resourcepackprofiles.missing_download.message_one", profiles[0].name)
+            else t("screen.resourcepackprofiles.missing_download.message_many")
+        val message = Component.empty().append(intro)
+        if (manual.isNotEmpty()) {
+            message.append(Component.literal(" ")).append(t("screen.resourcepackprofiles.missing_download.manual", packCount(manual.size)))
+        }
+        minecraft.showScreen(ConfirmDialogScreen(
+            this,
+            t("screen.resourcepackprofiles.missing_download.title"),
+            message,
+            t("button.resourcepackprofiles.download_n", packCount(fetchable.size)),
+            items = fetchable.map { it.removePrefix("file/") }.sortedBy { it.lowercase() },
+            destructive = false,
+            cancelLabel = t("button.resourcepackprofiles.not_now")
+        ) { downloadMissing(profileNames) })
     }
 
     private fun onChangeIcon() {
@@ -761,10 +803,10 @@ class ProfileScreen @JvmOverloads constructor(
             }
         }
         if (trashed.isNotEmpty()) {
-            minecraft.resourcePackRepository.reload()
+            reloadPacks()
             undo = {
                 trashed.forEach { PackTrash.restore(it) }
-                minecraft.resourcePackRepository.reload()
+                reloadPacks()
             }
         }
         trashCount = PackTrash.count()
@@ -884,7 +926,7 @@ class ProfileScreen @JvmOverloads constructor(
                 busy = null
                 result.onSuccess { report ->
                     checks.putAll(report.checks)
-                    ProfileManager.recordSources(report.identities)
+                    ProfileManager.recordSources(report.identities, report.projects)
                     if (libraryMode) rebuildPackList()
                     if (single) {
                         val name = packName(ids.first())
@@ -926,22 +968,26 @@ class ProfileScreen @JvmOverloads constructor(
      */
     private fun downloadOnly(updates: List<PackUpdate>) {
         if (busy != null || updates.isEmpty()) return
+        val batch = DownloadProgress(updates)
+        progress = batch
         busy = t("status.resourcepackprofiles.downloading", updates.size)
         Thread {
             val result = try {
-                updates.forEach { UpdateChecker.download(it) }
-                Result.success(updates.size)
+                Result.success(UpdateChecker.downloadAll(updates, batch))
             } catch (e: Exception) {
                 logger.error("Failed to download pack updates", e)
                 Result.failure(e)
             }
             Minecraft.getInstance().execute {
                 busy = null
-                minecraft.resourcePackRepository.reload()
+                progress = null
+                reloadPacks()
                 refreshPackCache()
                 rebuildPackList()
-                result.onSuccess { count ->
-                    showStatus(t("status.resourcepackprofiles.updates_downloaded", count), Theme.SUCCESS)
+                result.onSuccess { outcome ->
+                    val done = outcome.replacements.size
+                    if (outcome.failed.isEmpty()) showStatus(t("status.resourcepackprofiles.updates_downloaded", done), Theme.SUCCESS)
+                    else showError(t("status.resourcepackprofiles.downloaded_partial", done, outcome.failed.size))
                 }.onFailure {
                     showError(t("status.resourcepackprofiles.download_failed"))
                 }
@@ -956,23 +1002,34 @@ class ProfileScreen @JvmOverloads constructor(
      */
     private fun applyUpdates(profileName: String, updates: List<PackUpdate>, backup: Boolean = false) {
         if (busy != null || updates.isEmpty()) return
+        val batch = DownloadProgress(updates)
+        progress = batch
         busy = t("status.resourcepackprofiles.downloading", updates.size)
         Thread {
             val result = try {
-                Result.success(updates.associate { it.packId to UpdateChecker.download(it) })
+                Result.success(UpdateChecker.downloadAll(updates, batch))
             } catch (e: Exception) {
                 logger.error("Failed to download pack updates", e)
                 Result.failure(e)
             }
             Minecraft.getInstance().execute {
                 busy = null
-                result.onSuccess { replacements ->
+                progress = null
+                result.onSuccess { outcome ->
+                    // Packs that downloaded are switched; any that failed are left as they were.
+                    val replacements = outcome.replacements
+                    if (replacements.isEmpty()) {
+                        showError(t("status.resourcepackprofiles.download_failed"))
+                        return@onSuccess
+                    }
                     val before = ProfileManager.getProfile(profileName) ?: return@onSuccess
                     val backupName = if (backup) ProfileManager.duplicateProfile(profileName, " (backup)") else null
-                    minecraft.resourcePackRepository.reload()
+                    reloadPacks()
                     val changed = replacements.filter { it.key != it.value }
-                    val newSources = updates.mapNotNull { u -> replacements[u.packId]?.let { it to u.versionId } }.toMap()
-                    ProfileManager.replacePackIds(profileName, changed, newSources, rememberPrevious = true, carrySources = false)
+                    val done = updates.filter { it.packId in replacements }
+                    val newSources = done.associate { replacements.getValue(it.packId) to it.versionId }
+                    val newProjects = done.filter { it.projectId.isNotEmpty() }.associate { replacements.getValue(it.packId) to it.projectId }
+                    ProfileManager.replacePackIds(profileName, changed, newSources, newProjects, rememberPrevious = true, carrySources = false)
                     undo = {
                         ProfileManager.putProfile(before)
                         backupName?.let { ProfileManager.deleteProfile(it) }
@@ -984,6 +1041,8 @@ class ProfileScreen @JvmOverloads constructor(
                     rebuildPackList()
                     val only = updates.singleOrNull()
                     when {
+                        outcome.failed.isNotEmpty() ->
+                            showError(t("status.resourcepackprofiles.packs_updated_partial", replacements.size, outcome.failed.size))
                         only != null -> showStatus(t("status.resourcepackprofiles.pack_switched", only.projectTitle, only.newVersion), Theme.SUCCESS)
                         backupName != null -> showStatus(t("status.resourcepackprofiles.packs_updated_backup", updates.size, backupName), Theme.SUCCESS)
                         else -> showStatus(t("status.resourcepackprofiles.packs_updated", updates.size), Theme.SUCCESS)
@@ -1010,7 +1069,13 @@ class ProfileScreen @JvmOverloads constructor(
      * immediately with a loading line (and the switch-back entry, which needs no network) and is
      * filled in when Modrinth answers.
      */
-    private fun openVersions(packId: String, right: Int, top: Int) {
+    /** What the worker found when a version list was opened: versions, or possible matches to pick from. */
+    private sealed interface VersionLookup {
+        class Versions(val choices: List<VersionChoice>?) : VersionLookup
+        class Matches(val hits: List<ProjectHit>) : VersionLookup
+    }
+
+    private fun openVersions(packId: String, right: Int, top: Int, pickedProject: String? = null) {
         val profile = selected ?: return
         val base = mutableListOf<MenuItem>()
         val previous = profile.previousPacks?.get(packId)
@@ -1020,10 +1085,19 @@ class ProfileScreen @JvmOverloads constructor(
         openMenuAt(base + MenuItem(t("menu.resourcepackprofiles.versions_loading"), muted = true, enabled = false) {}, right, top)
         menuOwner = packId
 
-        val known = profile.packSources?.get(packId)
+        val missing = packId !in packsById
+        // A project chosen from search results replaces whatever the profile remembers.
+        val knownVersion = if (pickedProject != null) null else profile.packSources?.get(packId)
+        val project = pickedProject ?: profile.packProjects?.get(packId)
         Thread {
             val result = try {
-                Result.success(UpdateChecker.listVersions(packId, known))
+                var lookup: VersionLookup = VersionLookup.Versions(UpdateChecker.listVersions(packId, knownVersion, project))
+                // A missing pack that can't be tied to a project (an older export, or a version that
+                // is gone and was never linked) is searched for by its name instead.
+                if (missing && pickedProject == null && (lookup as VersionLookup.Versions).choices == null) {
+                    lookup = VersionLookup.Matches(UpdateChecker.searchProjects(packId))
+                }
+                Result.success(lookup)
             } catch (e: Exception) {
                 logger.error("Failed to list versions for {}", packId, e)
                 Result.failure(e)
@@ -1032,13 +1106,23 @@ class ProfileScreen @JvmOverloads constructor(
                 // The user may have closed this menu, or opened another, while we were waiting.
                 if (menu == null || menuOwner != packId) return@execute
                 val items = base.toMutableList()
-                val choices = result.getOrNull()
+                val lookup = result.getOrNull()
                 when {
-                    result.isFailure ->
+                    lookup == null ->
                         items.add(MenuItem(t("menu.resourcepackprofiles.versions_failed"), muted = true, enabled = false) {})
-                    choices == null ->
+                    lookup is VersionLookup.Matches -> {
+                        if (lookup.hits.isEmpty()) {
+                            items.add(MenuItem(t("menu.resourcepackprofiles.no_matches"), muted = true, enabled = false) {})
+                        } else {
+                            items.add(MenuItem(t("menu.resourcepackprofiles.search_results", UpdateChecker.guessName(packId)), muted = true, enabled = false) {})
+                            for (hit in lookup.hits) {
+                                items.add(MenuItem(Component.literal(hit.title)) { openVersions(packId, right, top, hit.projectId) })
+                            }
+                        }
+                    }
+                    lookup is VersionLookup.Versions && lookup.choices == null ->
                         items.add(MenuItem(t("menu.resourcepackprofiles.versions_unknown"), muted = true, enabled = false) {})
-                    else -> for (choice in choices) {
+                    lookup is VersionLookup.Versions -> for (choice in lookup.choices.orEmpty()) {
                         val noteKey = when {
                             choice.current -> "label.resourcepackprofiles.version_current"
                             isInstalled(choice.update) -> "label.resourcepackprofiles.version_installed"
@@ -1060,32 +1144,48 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     /** Downloads the selected profile's missing packs that Modrinth still has. */
-    private fun downloadMissing() {
-        val profile = selected ?: return
-        val sources = fetchableMissing(profile)
+    /** What a missing-pack download found: how it went, and which versions Modrinth no longer has. */
+    private class MissingOutcome(val outcome: DownloadOutcome, val gone: Set<String>)
+
+    private fun downloadMissing(profileNames: List<String> = listOfNotNull(selected?.name)) {
+        // Pack id -> Modrinth version id, across every profile asked about.
+        val sources = profileNames.mapNotNull { ProfileManager.getProfile(it) }
+            .flatMap { fetchableMissing(it).entries }
+            .associate { it.key to it.value }
         if (busy != null || sources.isEmpty()) return
-        val name = profile.name
         busy = t("status.resourcepackprofiles.downloading_missing", sources.size)
         Thread {
             val result = try {
-                val downloads = UpdateChecker.resolveMissing(sources)
-                Result.success(downloads.associate { it.packId to UpdateChecker.download(it) })
+                // The progress bar needs file names and sizes, so it starts once versions are resolved.
+                val found = UpdateChecker.resolveMissing(sources)
+                val batch = DownloadProgress(found)
+                progress = batch
+                val outcome = UpdateChecker.downloadAll(found, batch)
+                Result.success(MissingOutcome(outcome, sources.keys - found.map { it.packId }.toSet()))
             } catch (e: Exception) {
                 logger.error("Failed to download missing packs", e)
                 Result.failure(e)
             }
             Minecraft.getInstance().execute {
                 busy = null
-                result.onSuccess { replacements ->
-                    minecraft.resourcePackRepository.reload()
+                progress = null
+                result.onSuccess { r ->
+                    reloadPacks()
                     // A file saved under a different name gets a different pack id.
-                    val renamed = replacements.filter { it.key != it.value }
-                    if (renamed.isNotEmpty()) ProfileManager.replacePackIds(name, renamed)
+                    val renamed = r.outcome.replacements.filter { it.key != it.value }
+                    profileNames.forEach { name ->
+                        if (renamed.isNotEmpty()) ProfileManager.replacePackIds(name, renamed)
+                        // Versions Modrinth no longer has can never be downloaded: forget them, so
+                        // "Download N Missing" stops counting them. The project is kept, which is
+                        // what lets another version be picked from the pack's row.
+                        if (r.gone.isNotEmpty()) ProfileManager.dropSources(name, r.gone)
+                    }
                     refreshPackCache()
                     rebuildPackList()
-                    val unavailable = sources.size - replacements.size
-                    if (unavailable == 0) showStatus(t("status.resourcepackprofiles.missing_downloaded", replacements.size), Theme.SUCCESS)
-                    else showError(t("status.resourcepackprofiles.missing_partial", replacements.size, unavailable))
+                    val downloaded = r.outcome.replacements.size
+                    val problems = r.gone.size + r.outcome.failed.size
+                    if (problems == 0) showStatus(t("status.resourcepackprofiles.missing_downloaded", downloaded), Theme.SUCCESS)
+                    else showError(t("status.resourcepackprofiles.missing_partial", downloaded, problems))
                 }.onFailure {
                     showError(t("status.resourcepackprofiles.download_failed"))
                 }
@@ -1337,16 +1437,18 @@ class ProfileScreen @JvmOverloads constructor(
             }
         }
         if (installed > 0) {
-            minecraft.resourcePackRepository.reload()
+            reloadPacks()
             refreshPackCache()
             rebuildPackList()
         }
-        val imported = importProfiles(profiles)
+        val importedNames = importProfiles(profiles)
+        val imported = importedNames.size
 
         when {
             imported == 0 && installed == 0 -> showError(t("status.resourcepackprofiles.drop_nothing"))
             else -> showStatus(t("status.resourcepackprofiles.dropped", imported, installed), Theme.SUCCESS)
         }
+        offerMissingPacks(importedNames)
     }
 
     // --- Rendering ---
@@ -1365,11 +1467,22 @@ class ProfileScreen @JvmOverloads constructor(
     private fun packCount(count: Int): Component =
         if (count == 1) t("label.resourcepackprofiles.pack_count_one") else t("label.resourcepackprofiles.pack_count", count)
 
+    /**
+     * Rescans the resource packs folder. Icons that failed to load before (a pack that was missing
+     * or not downloaded yet) are retried afterwards; without this a freshly downloaded pack kept
+     * its placeholder icon until the screen was reopened.
+     */
+    private fun reloadPacks() {
+        minecraft.resourcePackRepository.reload()
+        packsWithoutIcon.clear()
+    }
+
     private fun packIcon(packId: String): Identifier {
         if (packId in packsWithoutIcon) return UNKNOWN_PACK
         val id = packTextures.getOrRegister(packId, UNKNOWN_PACK) { PackIcons.read(packId) }
-        // A miss is not cached by the texture cache; remember it so the zip isn't reopened each frame.
-        if (id == UNKNOWN_PACK) packsWithoutIcon.add(packId)
+        // A miss is not cached by the texture cache; remember it so the zip isn't reopened each
+        // frame. Only for packs that are installed: a missing pack may be downloaded at any moment.
+        if (id == UNKNOWN_PACK && packId in packsById) packsWithoutIcon.add(packId)
         return id
     }
 
@@ -1528,7 +1641,7 @@ class ProfileScreen @JvmOverloads constructor(
             extractDetail(context, profile, mx, my)
         }
 
-        extractBottomBar(context)
+        extractBottomBar(context, mx, my)
         extractMenu(context, mouseX, mouseY)
     }
 
@@ -1578,12 +1691,22 @@ class ProfileScreen @JvmOverloads constructor(
         }
     }
 
-    private fun extractBottomBar(context: GuiGraphicsExtractor) {
+    private fun extractBottomBar(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int) {
         val right = (if (undoButton.visible) undoButton.x else doneButton.x) - 6
         val now = System.currentTimeMillis()
         val busyText = busy
         val statusText = status
+        val batch = progress
         when {
+            busyText != null && batch != null -> {
+                // Downloads: a bar along the bottom of the message, and the details on hover.
+                val label = t("status.resourcepackprofiles.downloading_progress", batch.finished, batch.total)
+                val bounds = statusPill(context, label, Theme.ACTIVE, 1f, right, batch.fraction())
+                if (bounds != null && mouseX >= bounds[0] && mouseX < bounds[0] + bounds[2] &&
+                    mouseY >= bounds[1] && mouseY < bounds[1] + bounds[3]) {
+                    context.setComponentTooltipForNextFrame(font, progressLines(batch), mouseX, mouseY)
+                }
+            }
             busyText != null -> statusPill(context, busyText, Theme.ACTIVE, 1f, right)
             statusText != null && now < statusUntil -> {
                 // Fade out over the last half second.
@@ -1598,19 +1721,61 @@ class ProfileScreen @JvmOverloads constructor(
 
     /**
      * A status message on its own small panel, in line with the Undo/Done buttons. It sits over
-     * the world or menu background, so bare text would be unreadable on bright scenery.
+     * the world or menu background, so bare text would be unreadable on bright scenery. With a
+     * [fraction] it also draws a progress bar along its bottom edge. Returns the panel's
+     * x, y, width and height, or null if there was no room to draw it.
      */
-    private fun statusPill(context: GuiGraphicsExtractor, text: Component, color: Int, alpha: Float, right: Int) {
+    private fun statusPill(context: GuiGraphicsExtractor, text: Component, color: Int, alpha: Float, right: Int, fraction: Float? = null): IntArray? {
         val padX = 6
         val maxText = right - pad - padX * 2
-        if (maxText <= 0) return
+        if (maxText <= 0) return null
         val shown = ScreenUtils.truncate(font, text.string, maxText)
         val x = pad
         val y = height - 24
-        val w = font.width(shown) - 1 + padX * 2
+        val barHeight = if (fraction != null) 2 else 0
+        // Wide enough for the bar to read as a bar, but never past the buttons.
+        val w = (font.width(shown) - 1 + padX * 2).coerceAtLeast(if (fraction != null) 140 else 0).coerceAtMost(right - pad)
         val h = 18
         context.fill(x, y, x + w, y + h, Theme.withAlpha(Theme.RAISED_FILL, alpha))
-        context.text(font, shown, x + padX, y + (h - 7) / 2, Theme.withAlpha(color, alpha), true)
+        context.text(font, shown, x + padX, y + (h - barHeight - 7) / 2, Theme.withAlpha(color, alpha), true)
+        if (fraction != null) {
+            context.fill(x, y + h - barHeight, x + w, y + h, Theme.CONTROL_FILL)
+            context.fill(x, y + h - barHeight, x + (w * fraction).toInt(), y + h, Theme.ACTIVE)
+        }
+        return intArrayOf(x, y, w, h)
+    }
+
+    /**
+     * Hover text for the download bar. Kept to a handful of lines however long the batch is: the
+     * count, what is downloading now, and the next few, last few finished and failed files.
+     */
+    private fun progressLines(batch: DownloadProgress): List<Component> {
+        fun names(items: List<DownloadProgress.Item>, limit: Int): String {
+            val shown = items.take(limit).joinToString(", ") { ScreenUtils.truncate(font, it.name, 150) }
+            return if (items.size > limit) "$shown, " + t("tooltip.resourcepackprofiles.progress_more", items.size - limit).string else shown
+        }
+        fun line(key: String, color: ChatFormatting, text: String): Component =
+            Component.translatable(key, text).withStyle(color)
+
+        val lines = mutableListOf<Component>(
+            t("tooltip.resourcepackprofiles.progress_title", batch.finished, batch.total, (batch.fraction() * 100).toInt())
+        )
+        val state = { wanted: DownloadProgress.State -> batch.items.filter { it.state == wanted } }
+        state(DownloadProgress.State.ACTIVE).firstOrNull()?.let {
+            lines.add(line("tooltip.resourcepackprofiles.progress_now", ChatFormatting.YELLOW, ScreenUtils.truncate(font, it.name, 200)))
+        }
+        state(DownloadProgress.State.WAITING).takeIf { it.isNotEmpty() }?.let {
+            lines.add(line("tooltip.resourcepackprofiles.progress_next", ChatFormatting.GRAY, names(it, 2)))
+        }
+        // The most recent finished files, not the first ones: those are the ones just completed.
+        state(DownloadProgress.State.DONE).takeIf { it.isNotEmpty() }?.let {
+            lines.add(line("tooltip.resourcepackprofiles.progress_done", ChatFormatting.GREEN, names(it.takeLast(2).reversed(), 2) +
+                (if (it.size > 2) ", " + t("tooltip.resourcepackprofiles.progress_earlier", it.size - 2).string else "")))
+        }
+        state(DownloadProgress.State.FAILED).takeIf { it.isNotEmpty() }?.let {
+            lines.add(line("tooltip.resourcepackprofiles.progress_failed", ChatFormatting.RED, names(it, 2)))
+        }
+        return lines
     }
 
     private fun extractMenu(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int) {
@@ -1937,11 +2102,13 @@ class ProfileScreen @JvmOverloads constructor(
         }
         private fun removeX() = contentLeft() - 10 - Icon.CLOSE.width
         private fun checkX() = removeX() - 9 - Icon.REFRESH.width
-        private fun versionsX() = checkX() - 9 - VERSIONS_SLOT
+        // Missing packs have no refresh icon, so the versions icon takes its place.
+        private fun versionsX() = (if (checkable) checkX() else removeX()) - 9 - VERSIONS_SLOT
 
         private fun overRemove(mx: Double) = mx >= removeX() - 5 && mx < removeX() + Icon.CLOSE.width + 4
         private fun overCheck(mx: Double) = mx >= checkX() - 4 && mx < removeX() - 5
-        private fun overVersions(mx: Double) = mx >= versionsX() - 4 && mx < checkX() - 4
+        private fun overVersions(mx: Double) =
+            mx >= versionsX() - 4 && mx < (if (checkable) checkX() - 4 else removeX() - 5)
 
         /** Only pack files can be deleted; built-in and mod-provided packs have no file. */
         private val deletable get() = mode == RowMode.LIBRARY && isPackFile(packId)
@@ -1950,7 +2117,10 @@ class ProfileScreen @JvmOverloads constructor(
         private val checkable get() = mode != RowMode.ADD && isPackFile(packId) && packId in packsById
 
         /** Whether this row has the version button (profile rows of installed pack files). */
-        private val versioned get() = mode == RowMode.PROFILE && checkable
+        private val versioned get() = mode == RowMode.PROFILE && isPackFile(packId)
+
+        /** A pack file the profile uses but that isn't installed. Its version list is how to replace it. */
+        private val findable get() = versioned && packId !in packsById
 
         // A row with an update shows the new version and a tick box at the row's right edge.
         // Ticked packs are the ones "Update N Selected" will update.
@@ -2182,7 +2352,8 @@ class ProfileScreen @JvmOverloads constructor(
                     }
                 }
                 RowMode.PROFILE -> {
-                    if (versioned && rowHot) {
+                    // Shown on hover, and always on a missing pack so the way to replace it is visible.
+                    if (versioned && (rowHot || findable)) {
                         // The version list (any version, or switch back) is a hover icon. It stays
                         // lit while its list is open.
                         val hot = overVersions(mx) || menuAnchor
@@ -2192,7 +2363,10 @@ class ProfileScreen @JvmOverloads constructor(
                             centerY - Icon.CHEVRON.height / 2,
                             if (hot) Theme.TEXT else Theme.TEXT_SECONDARY
                         )
-                        if (hot && !menuAnchor) context.setTooltipForNextFrame(t("tooltip.resourcepackprofiles.choose_version"), mouseX, mouseY)
+                        if (hot && !menuAnchor) {
+                            val tip = if (findable) "tooltip.resourcepackprofiles.find_version" else "tooltip.resourcepackprofiles.choose_version"
+                            context.setTooltipForNextFrame(t(tip), mouseX, mouseY)
+                        }
                     }
                     if (versioned && pending != null) {
                         val ticked = packId in tickedUpdates
@@ -2221,7 +2395,7 @@ class ProfileScreen @JvmOverloads constructor(
             }
 
             rightEdge = minOf(rightEdge, contentLeft() - 6)
-            if (rowHot) {
+            if (rowHot || findable) {
                 val leftmostIcon = when {
                     versioned -> versionsX()
                     showCheck -> checkX()

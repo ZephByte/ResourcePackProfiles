@@ -21,14 +21,26 @@ data class PackUpdate(
     val url: String,
     val sha512: String,
     /** Modrinth version id of the file this downloads. */
-    val versionId: String
+    val versionId: String,
+    /** Modrinth project the version belongs to, so the pack can be found again later. */
+    val projectId: String = "",
+    /** File size in bytes, for the progress bar; 0 when unknown. */
+    val size: Long = 0
 )
+
+/** Which Modrinth version, and project, an installed pack file is. */
+class PackIdentity(val versionId: String, val projectId: String)
 
 /**
  * Result of [UpdateChecker.check]. [identities] maps each pack that Modrinth recognised to the
  * version id of the file currently installed.
  */
-class CheckReport(val checks: Map<String, PackCheck>, val identities: Map<String, String>)
+class CheckReport(
+    val checks: Map<String, PackCheck>,
+    val identities: Map<String, String>,
+    /** Pack id -> Modrinth project id, for the packs in [identities]. */
+    val projects: Map<String, String>
+)
 
 /**
  * One version of a pack that the user can switch to. [update] carries what to download;
@@ -67,6 +79,7 @@ object UpdateChecker {
     fun check(packIds: Collection<String>): CheckReport {
         val results = mutableMapOf<String, PackCheck>()
         val identities = mutableMapOf<String, String>()
+        val projects = mutableMapOf<String, String>()
         val hashById = mutableMapOf<String, String>()
         for (id in packIds.distinct()) {
             val file = packFile(id)
@@ -81,7 +94,7 @@ object UpdateChecker {
                 results[id] = PackCheck.Unavailable
             }
         }
-        if (hashById.isEmpty()) return CheckReport(results, identities)
+        if (hashById.isEmpty()) return CheckReport(results, identities, projects)
 
         val hashes = hashById.values.toSet()
         val known = ModrinthApi.versionsByHash(hashes)
@@ -95,6 +108,7 @@ object UpdateChecker {
                 continue
             }
             identities[id] = current.id
+            projects[id] = current.projectId
             val newest = latest[hash]
             if (newest == null) {
                 results[id] = PackCheck.NoCompatibleVersion
@@ -118,18 +132,20 @@ object UpdateChecker {
                     fileName = file.filename,
                     url = file.url,
                     sha512 = sha512.lowercase(),
-                    versionId = newest.id
+                    versionId = newest.id,
+                    projectId = current.projectId,
+                    size = file.size
                 )
             )
         }
-        return CheckReport(results, identities)
+        return CheckReport(results, identities, projects)
     }
 
     /**
      * Looks up which Modrinth version each installed pack in [packIds] is, without checking for
      * updates. Packs that are not files or not on Modrinth are absent. Blocking.
      */
-    fun identify(packIds: Collection<String>): Map<String, String> {
+    fun identify(packIds: Collection<String>): Map<String, PackIdentity> {
         val hashById = mutableMapOf<String, String>()
         for (id in packIds.distinct()) {
             val file = packFile(id) ?: continue
@@ -140,20 +156,25 @@ object UpdateChecker {
             }
         }
         val known = ModrinthApi.versionsByHash(hashById.values.toSet())
-        return hashById.mapNotNull { (id, hash) -> known[hash]?.let { id to it.id } }.toMap()
+        return hashById.mapNotNull { (id, hash) -> known[hash]?.let { id to PackIdentity(it.id, it.projectId) } }.toMap()
     }
 
     /**
-     * Lists every version of the pack behind [packId], newest first, or null if the pack is not on
-     * Modrinth. [knownVersionId] is the version id already recorded for the installed file, which
-     * saves hashing it again. Blocking.
+     * Lists every version of a pack, newest first, or null if the pack can't be tied to a Modrinth
+     * project. The project comes from [projectId] if known; otherwise from [knownVersionId] (the
+     * version recorded for the pack), otherwise from the installed file's hash. A pack whose file
+     * or recorded version no longer exists can still be listed through [projectId]. Blocking.
      */
-    fun listVersions(packId: String, knownVersionId: String?): List<VersionChoice>? {
-        val currentId = knownVersionId ?: identify(listOf(packId))[packId] ?: return null
-        val current = ModrinthApi.versionsByIds(listOf(currentId)).firstOrNull() ?: return null
-        val title = ModrinthApi.projectTitles(listOf(current.projectId))[current.projectId] ?: current.name
+    fun listVersions(packId: String, knownVersionId: String?, projectId: String?): List<VersionChoice>? {
+        var current: ApiVersion? = knownVersionId?.let { ModrinthApi.versionsByIds(listOf(it)).firstOrNull() }
+        if (current == null && projectId == null && packFile(packId) != null) {
+            val id = identify(listOf(packId))[packId]?.versionId
+            if (id != null) current = ModrinthApi.versionsByIds(listOf(id)).firstOrNull()
+        }
+        val project = projectId ?: current?.projectId ?: return null
+        val title = ModrinthApi.projectTitles(listOf(project))[project] ?: current?.name ?: ""
         val game = gameVersion()
-        return ModrinthApi.projectVersions(current.projectId)
+        return ModrinthApi.projectVersions(project)
             .sortedByDescending { it.datePublished }
             .mapNotNull { version ->
                 val file = version.files.firstOrNull { it.primary } ?: version.files.firstOrNull() ?: return@mapNotNull null
@@ -162,17 +183,34 @@ object UpdateChecker {
                     PackUpdate(
                         packId = packId,
                         projectTitle = title,
-                        currentVersion = current.versionNumber,
+                        currentVersion = current?.versionNumber ?: "",
                         newVersion = version.versionNumber,
                         fileName = file.filename,
                         url = file.url,
                         sha512 = sha512.lowercase(),
-                        versionId = version.id
+                        versionId = version.id,
+                        projectId = version.projectId,
+                        size = file.size
                     ),
                     compatible = game in version.gameVersions,
-                    current = version.id == current.id
+                    current = version.id == current?.id
                 )
             }
+    }
+
+    /**
+     * Searches Modrinth for the pack behind [packId] by a name guessed from its file name. For
+     * packs that cannot be identified any other way. Blocking.
+     */
+    fun searchProjects(packId: String): List<ProjectHit> = ModrinthApi.searchProjects(guessName(packId))
+
+    /** "Fancy_Beds-v4.1.zip" -> "Fancy Beds": the file name without extension, version and separators. */
+    fun guessName(packId: String): String {
+        val base = packId.removePrefix("file/").replace(Regex("\\.zip$", RegexOption.IGNORE_CASE), "")
+        // Cut at the first separator that is followed by a version-looking token.
+        val cut = Regex("[\\s_-]+v?\\d").find(base)?.range?.first?.takeIf { it > 0 } ?: base.length
+        val name = base.substring(0, cut).replace(Regex("[_-]+"), " ").replace(Regex("\\s+"), " ").trim()
+        return name.ifEmpty { base }
     }
 
     /**
@@ -193,7 +231,9 @@ object UpdateChecker {
                 fileName = file.filename,
                 url = file.url,
                 sha512 = sha512.lowercase(),
-                versionId = version.id
+                versionId = version.id,
+                projectId = version.projectId,
+                size = file.size
             )
         }
     }
@@ -203,7 +243,7 @@ object UpdateChecker {
      * overwrites an existing file: a same-named file with identical content is reused, a
      * different one gets a numeric suffix. Blocking; call off the render thread.
      */
-    fun download(update: PackUpdate): String {
+    fun download(update: PackUpdate, onBytes: (Long) -> Unit = {}): String {
         val uri = URI.create(update.url)
         val host = uri.host ?: throw IOException("Download URL has no host")
         if (uri.scheme != "https" || !(host == "modrinth.com" || host.endsWith(".modrinth.com"))) {
@@ -228,7 +268,17 @@ object UpdateChecker {
         try {
             val digest = MessageDigest.getInstance("SHA-512")
             ModrinthApi.openStream(update.url).use { raw ->
-                DigestInputStream(raw, digest).use { Files.copy(it, partial, StandardCopyOption.REPLACE_EXISTING) }
+                DigestInputStream(raw, digest).use { input ->
+                    Files.newOutputStream(partial).use { out ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            out.write(buffer, 0, read)
+                            onBytes(read.toLong())
+                        }
+                    }
+                }
             }
             if (toHex(digest.digest()) != update.sha512) {
                 throw IOException("Checksum mismatch for $name")
@@ -239,6 +289,28 @@ object UpdateChecker {
         }
         logger.info("Downloaded pack update {}", target.fileName)
         return "file/${target.fileName}"
+    }
+
+    /**
+     * Downloads [updates] one after another, keeping [progress] current. A download that fails is
+     * recorded and skipped, so one bad file doesn't stop the rest. Blocking.
+     */
+    fun downloadAll(updates: List<PackUpdate>, progress: DownloadProgress): DownloadOutcome {
+        val replacements = mutableMapOf<String, String>()
+        val failed = mutableListOf<PackUpdate>()
+        updates.forEachIndexed { i, update ->
+            val item = progress.items[i]
+            item.state = DownloadProgress.State.ACTIVE
+            try {
+                replacements[update.packId] = download(update) { item.bytes += it }
+                item.state = DownloadProgress.State.DONE
+            } catch (e: Exception) {
+                logger.warn("Could not download {}: {}", update.fileName, e.message)
+                item.state = DownloadProgress.State.FAILED
+                failed.add(update)
+            }
+        }
+        return DownloadOutcome(replacements, failed)
     }
 
     /**

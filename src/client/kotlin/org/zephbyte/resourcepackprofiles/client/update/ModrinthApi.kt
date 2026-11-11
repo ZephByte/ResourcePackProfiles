@@ -35,6 +35,14 @@ data class ApiVersion(
 
 private data class ApiProject(val id: String = "", val title: String = "")
 
+private data class ApiSearch(val hits: List<ProjectHit> = emptyList())
+
+/** One result of a project search. */
+data class ProjectHit(
+    @SerializedName("project_id") val projectId: String = "",
+    val title: String = ""
+)
+
 /**
  * Minimal client for the keyless parts of the Modrinth v2 API. Every call blocks, so use it off
  * the render thread.
@@ -85,6 +93,14 @@ object ModrinthApi {
         val type = object : TypeToken<List<ApiProject>>() {}.type
         val projects: List<ApiProject> = gson.fromJson(send(request), type) ?: emptyList()
         return projects.associate { it.id to it.title }
+    }
+
+    /** Searches resource pack projects by name, best match first. */
+    fun searchProjects(query: String, limit: Int = 8): List<ProjectHit> {
+        val facets = URLEncoder.encode("[[\"project_type:resourcepack\"]]", StandardCharsets.UTF_8)
+        val q = URLEncoder.encode(query, StandardCharsets.UTF_8)
+        val request = baseRequest("/search?query=$q&facets=$facets&limit=$limit").GET().build()
+        return gson.fromJson(send(request), ApiSearch::class.java)?.hits ?: emptyList()
     }
 
     /** Fetches versions by their Modrinth version id. Unknown ids are absent from the result. */

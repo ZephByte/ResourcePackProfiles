@@ -11,6 +11,8 @@ data class ResourcePackProfile(
     val disabledPackIds: List<String>? = null,
     /** Pack id -> Modrinth version id, for packs known to Modrinth. Lets missing packs be fetched. */
     val packSources: Map<String, String>? = null,
+    /** Pack id -> Modrinth project id. Unlike a version, a project survives the version being deleted. */
+    val packProjects: Map<String, String>? = null,
     /** Pack id -> the pack id it replaced in this profile, so a version switch can be reverted. */
     val previousPacks: Map<String, String>? = null
 ) {

@@ -25,7 +25,7 @@ A client-side Fabric mod for saving, managing, and sharing named resource pack l
 - **Import and export:** share profiles as `.rpprofile` files, or drop them onto the screen to import. Dropping a `.zip` installs it as a resource pack.
 - **Switch packs off:** untick a pack to skip it in a profile without losing its place in the load order.
 - **All Packs view:** see every installed pack and how many profiles use it. Unused packs can be moved to a trash folder, which you can undo until you empty the trash.
-- **Missing packs:** profiles that reference packs you don't have are flagged, and can still be applied without them. Packs that came from Modrinth can be downloaded again with one click.
+- **Missing packs:** profiles that reference packs you don't have are flagged, and can still be applied without them. Importing a profile offers to download the missing packs from Modrinth, and a **Download N Missing** button does the same later. If the exact version has been removed from Modrinth, click the arrow on the missing pack to pick another version. This works for packs the sharer had from Modrinth, in profiles exported by 2.0 or later.
 - **Compatibility warnings:** packs made for an older or newer version of Minecraft are flagged.
 - **Automatic switching (optional):** bind a profile to a world or server and it is applied when you join. Nothing switches automatically unless you set it up.
 - **Update checker:** check a single pack, a profile, or every installed pack for newer versions on Modrinth. Updating switches the profile to the new file and keeps the old one, so other profiles keep working and you can switch back. A version list lets you pick any version of a pack.

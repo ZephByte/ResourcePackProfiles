@@ -13,7 +13,7 @@
 - **Update checker** - packs are checked for newer versions on Modrinth once per game session (you are asked first, and can turn it off in Settings); tick the updates you want, or **Select All Updates**, then click **Update N Selected**. A refresh button checks again on demand
 - **Choose a version** - a pack's version list shows every version, so you can pick an older or newer one, or switch back to the one you had
 - **Safe updates** - updating switches the profile to the new file and keeps the old one, so other profiles are unaffected; Update All can save a backup copy of the profile first
-- **Download missing packs** - profiles remember which Modrinth version each pack is, so missing packs can be downloaded again, including in profiles someone shares with you
+- **Download missing packs** - importing a profile offers to download the packs you don't have from Modrinth, with a progress bar and a hover list of what is downloading; the same button is on any profile with missing packs. If a pack's recorded version no longer exists, use the arrow on that pack to pick another version, or search Modrinth for it. Profiles remember each pack's Modrinth project, so this works for profiles shared with you too (exported by 2.0 or later)
 - **Compatibility warnings** - packs made for an older or newer version of Minecraft are flagged
 - **Automatic switching (optional)** - while in a world or on a server, choose a profile to apply whenever you join it; off unless you set it up
 - **Search, drag and drop, shortcuts** - filter profiles by name or pack, drop `.rpprofile` or `.zip` files onto the screen, and use Enter, F2, Ctrl+F, Ctrl+D, and Ctrl+Z

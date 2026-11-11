@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import net.minecraft.client.Minecraft
 import org.slf4j.LoggerFactory
+import org.zephbyte.resourcepackprofiles.client.update.PackIdentity
 import org.zephbyte.resourcepackprofiles.client.update.UpdateChecker
 import org.zephbyte.resourcepackprofiles.client.util.FileDialogs
 import java.nio.file.Files
@@ -29,7 +30,8 @@ private data class ExportData(
     val favorite: Boolean = false,
     val customIcon: String? = null,
     val disabledPackIds: List<String>? = null,
-    val packSources: Map<String, String>? = null
+    val packSources: Map<String, String>? = null,
+    val packProjects: Map<String, String>? = null
 )
 
 /** Whether "Update All" saves a backup copy of the profile first. */
@@ -322,6 +324,7 @@ object ProfileManager {
         name: String,
         replacements: Map<String, String>,
         newSources: Map<String, String> = emptyMap(),
+        newProjects: Map<String, String> = emptyMap(),
         rememberPrevious: Boolean = false,
         carrySources: Boolean = true
     ) {
@@ -334,6 +337,9 @@ object ProfileManager {
             if (carrySources) profile.packSources.orEmpty().mapKeys { replacements[it.key] ?: it.key }
             else profile.packSources.orEmpty() - replacements.keys
         val sources = (carried + newSources).filterKeys { it in newIds }
+        // The project is the same whichever version the pack is on, so it always follows the pack.
+        val projects = (profile.packProjects.orEmpty().mapKeys { replacements[it.key] ?: it.key } + newProjects)
+            .filterKeys { it in newIds }
         var previous = profile.previousPacks.orEmpty()
         if (rememberPrevious) previous = previous + replacements.map { (old, new) -> new to old }
         previous = previous.filterKeys { it in newIds }
@@ -341,6 +347,7 @@ object ProfileManager {
             packIds = newIds,
             disabledPackIds = profile.disabledPackIds?.map { replacements[it] ?: it }?.distinct(),
             packSources = sources.ifEmpty { null },
+            packProjects = projects.ifEmpty { null },
             previousPacks = previous.ifEmpty { null }
         )
         save()
@@ -348,21 +355,38 @@ object ProfileManager {
     }
 
     /**
-     * Remembers which Modrinth version each pack in [sources] is, on every profile containing it,
-     * so the pack can be downloaded again if its file goes missing or the profile is shared.
+     * Remembers which Modrinth version and project each pack in [sources] and [projects] is, on
+     * every profile containing it, so the pack can be downloaded again if its file goes missing or
+     * the profile is shared.
      */
-    fun recordSources(sources: Map<String, String>) {
-        if (sources.isEmpty()) return
+    fun recordSources(sources: Map<String, String>, projects: Map<String, String> = emptyMap()) {
+        if (sources.isEmpty() && projects.isEmpty()) return
         var changed = false
         for ((name, profile) in profiles.toMap()) {
-            val relevant = sources.filterKeys { it in profile.packIds }
-            val merged = profile.packSources.orEmpty() + relevant
-            if (merged != profile.packSources.orEmpty()) {
-                profiles[name] = profile.copy(packSources = merged)
+            val mergedSources = profile.packSources.orEmpty() + sources.filterKeys { it in profile.packIds }
+            val mergedProjects = profile.packProjects.orEmpty() + projects.filterKeys { it in profile.packIds }
+            if (mergedSources != profile.packSources.orEmpty() || mergedProjects != profile.packProjects.orEmpty()) {
+                profiles[name] = profile.copy(
+                    packSources = mergedSources.ifEmpty { null },
+                    packProjects = mergedProjects.ifEmpty { null }
+                )
                 changed = true
             }
         }
         if (changed) save()
+    }
+
+    /**
+     * Forgets the recorded versions of [packIds] in one profile, for versions Modrinth no longer
+     * has. The project stays, so another version can still be picked. This also stops the profile
+     * offering to download a pack that can't be downloaded.
+     */
+    fun dropSources(name: String, packIds: Collection<String>) {
+        val profile = profiles[name] ?: return
+        val remaining = profile.packSources.orEmpty() - packIds.toSet()
+        if (remaining == profile.packSources.orEmpty()) return
+        profiles[name] = profile.copy(packSources = remaining.ifEmpty { null })
+        save()
     }
 
     /** How many profiles contain each pack id. */
@@ -450,14 +474,17 @@ object ProfileManager {
 
         return try {
             val iconBase64 = ProfileIconManager.encodeIconToBase64(profile)
-            val sources = profile.packSources.orEmpty() + identifyForExport(profile)
+            val found = identifyForExport(profile)
+            val sources = profile.packSources.orEmpty() + found.mapValues { it.value.versionId }
+            val projects = profile.packProjects.orEmpty() + found.mapValues { it.value.projectId }
             val exportData = ExportData(
                 name = profile.name,
                 packIds = profile.packIds,
                 favorite = profile.favorite,
                 customIcon = iconBase64,
                 disabledPackIds = profile.disabledPackIds,
-                packSources = sources.ifEmpty { null }
+                packSources = sources.ifEmpty { null },
+                packProjects = projects.ifEmpty { null }
             )
             Files.writeString(Path.of(path), gson.toJson(exportData))
             logger.info("Exported profile '{}' to {}", profile.name, path)
@@ -472,8 +499,8 @@ object ProfileManager {
      * Asks Modrinth which version each not-yet-identified pack is, so the exported file lets the
      * recipient download packs they don't have. Best effort: export still works offline.
      */
-    private fun identifyForExport(profile: ResourcePackProfile): Map<String, String> {
-        val unknown = profile.packIds.filter { profile.packSources?.containsKey(it) != true }
+    private fun identifyForExport(profile: ResourcePackProfile): Map<String, PackIdentity> {
+        val unknown = profile.packIds.filter { profile.packSources?.containsKey(it) != true || profile.packProjects?.containsKey(it) != true }
         if (unknown.isEmpty()) return emptyMap()
         return try {
             UpdateChecker.identify(unknown)
@@ -513,7 +540,8 @@ object ProfileManager {
                 packIds = data.packIds,
                 favorite = data.favorite,
                 disabledPackIds = data.disabledPackIds?.filter { it in data.packIds }?.ifEmpty { null },
-                packSources = data.packSources?.filterKeys { it in data.packIds }?.ifEmpty { null }
+                packSources = data.packSources?.filterKeys { it in data.packIds }?.ifEmpty { null },
+                packProjects = data.packProjects?.filterKeys { it in data.packIds }?.ifEmpty { null }
             )
 
             if (data.customIcon != null) {
