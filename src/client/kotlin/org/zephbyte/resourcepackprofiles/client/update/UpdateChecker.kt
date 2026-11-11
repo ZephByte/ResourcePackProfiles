@@ -340,7 +340,9 @@ object UpdateChecker {
             val item = progress.items[i]
             item.state = DownloadProgress.State.ACTIVE
             try {
-                replacements[update.packId] = download(update) { item.bytes += it }
+                val id = download(update) { item.bytes += it }
+                replacements[update.packId] = id
+                item.resultId = id
                 item.state = DownloadProgress.State.DONE
             } catch (e: Exception) {
                 logger.warn("Could not download {}: {}", update.fileName, e.message)

@@ -233,5 +233,6 @@
   "status.resourcepackprofiles.browse_installed": "Installed %s",
   "status.resourcepackprofiles.browse_added": "Installed %s and added it to '%s'",
   "status.resourcepackprofiles.browse_already": "%s is already installed",
-  "status.resourcepackprofiles.browse_already_in": "%s is already in '%s'"
+  "status.resourcepackprofiles.browse_already_in": "%s is already in '%s'",
+  "label.resourcepackprofiles.pack_downloaded": "Downloaded"
 }

@@ -151,6 +151,8 @@ class ProfileScreen @JvmOverloads constructor(
 
     private val packTextures = DynamicTextureCache("pack_icon")
     private val packsWithoutIcon = mutableSetOf<String>()
+    /** Missing packs of the running batch whose downloaded icon is already shown. */
+    private val iconsShown = mutableSetOf<String>()
 
     // --- Widgets ---
     private lateinit var searchBox: EditBox
@@ -1173,6 +1175,7 @@ class ProfileScreen @JvmOverloads constructor(
             .flatMap { fetchableMissing(it).entries }
             .associate { it.key to it.value }
         if (busy != null || sources.isEmpty()) return
+        iconsShown.clear()
         busy = t("status.resourcepackprofiles.downloading_missing", sources.size)
         Thread {
             val result = try {
@@ -1497,6 +1500,25 @@ class ProfileScreen @JvmOverloads constructor(
         packsWithoutIcon.clear()
     }
 
+    /**
+     * Shows each downloaded pack's icon as soon as its file is complete, instead of when the whole
+     * batch ends and the pack list is reloaded. The icon is read straight from the new file and
+     * registered under the row's (still missing) pack id. Packs that already have an icon, such as
+     * ones being updated, keep theirs.
+     */
+    private fun showDownloadedIcons() {
+        val batch = progress ?: return
+        for (item in batch.items) {
+            val newId = item.resultId ?: continue
+            if (item.state != DownloadProgress.State.DONE || item.sourceId in packsById || !iconsShown.add(item.sourceId)) continue
+            packTextures.getOrRegister(item.sourceId, UNKNOWN_PACK) { UpdateChecker.packFile(newId)?.let { PackIcons.readFile(it) } }
+        }
+    }
+
+    /** A missing pack whose download in the running batch has finished. */
+    private fun justDownloaded(packId: String): Boolean =
+        progress?.items?.any { it.sourceId == packId && it.state == DownloadProgress.State.DONE } == true
+
     private fun packIcon(packId: String): Identifier {
         if (packId in packsWithoutIcon) return UNKNOWN_PACK
         val id = packTextures.getOrRegister(packId, UNKNOWN_PACK) { PackIcons.read(packId) }
@@ -1509,6 +1531,7 @@ class ProfileScreen @JvmOverloads constructor(
     /** Per-frame work: caches shared by the rows, blur-commit of the name field, button state. */
     private fun updateFrameState() {
         refreshPackCache()
+        showDownloadedIcons()
         val profile = selected
 
         if (profile != null && !nameBox.isFocused && nameBox.value != profile.name) commitRename()
@@ -2003,7 +2026,7 @@ class ProfileScreen @JvmOverloads constructor(
             return when (mode) {
                 RowMode.PROFILE -> when {
                     versioned && pending != null -> updateTextX(pending)
-                    packId !in packsById -> labelX(t("label.resourcepackprofiles.pack_missing"))
+                    packId !in packsById -> labelX(missingLabel().first)
                     else -> rowRight() + 8
                 }
                 RowMode.LIBRARY -> if (pending != null && !isInstalled(pending)) downloadX() else labelX(usageLabel().first)
@@ -2039,6 +2062,11 @@ class ProfileScreen @JvmOverloads constructor(
             ScreenUtils.truncate(font, pending.newVersion, UPDATE_LABEL_MAX)
         private fun updateTextX(pending: PackUpdate) = tickX() - 5 - font.width(updateText(pending))
         private fun overUpdateTick(mx: Double, pending: PackUpdate) = mx >= updateTextX(pending) - 2 && mx < rowRight() + 3
+
+        /** "Missing", or "Downloaded" once this batch has fetched the file (before the list reloads). */
+        private fun missingLabel(): Pair<Component, Int> =
+            if (justDownloaded(packId)) t("label.resourcepackprofiles.pack_downloaded") to Theme.SUCCESS
+            else t("label.resourcepackprofiles.pack_missing") to Theme.DANGER
 
         /** Left edge of a label right-aligned at the row's edge. */
         private fun labelX(label: Component) = rowRight() - font.width(label)
@@ -2209,7 +2237,7 @@ class ProfileScreen @JvmOverloads constructor(
             val pending = update
             var rightEdge = x + width - 4
             var nameColor = when {
-                missing -> Theme.DANGER
+                missing && !justDownloaded(packId) -> Theme.DANGER
                 disabled -> Theme.TEXT_MUTED
                 else -> Theme.TEXT
             }
@@ -2296,9 +2324,9 @@ class ProfileScreen @JvmOverloads constructor(
                         rightEdge = lx - 6
                     }
                     if (missing) {
-                        val text = t("label.resourcepackprofiles.pack_missing")
+                        val (text, color) = missingLabel()
                         val lx = labelX(text)
-                        context.text(font, text, lx, centerY - 4, Theme.DANGER, true)
+                        context.text(font, text, lx, centerY - 4, color, true)
                         rightEdge = lx - 6
                     }
                 }

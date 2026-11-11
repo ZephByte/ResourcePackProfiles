@@ -7,12 +7,17 @@ package org.zephbyte.resourcepackprofiles.client.update
 class DownloadProgress(updates: List<PackUpdate>) {
     enum class State { WAITING, ACTIVE, DONE, FAILED }
 
-    class Item(val name: String, val size: Long) {
+    /**
+     * One file. [sourceId] is the pack id it was downloaded for (a missing pack, or the pack being
+     * updated); [resultId] is the pack id of the finished file, set just before it turns DONE.
+     */
+    class Item(val sourceId: String, val name: String, val size: Long) {
         @Volatile var state = State.WAITING
         @Volatile var bytes = 0L
+        @Volatile var resultId: String? = null
     }
 
-    val items: List<Item> = updates.map { Item(it.fileName, it.size) }
+    val items: List<Item> = updates.map { Item(it.packId, it.fileName, it.size) }
 
     val total: Int get() = items.size
 
