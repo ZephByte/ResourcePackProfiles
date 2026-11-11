@@ -77,18 +77,6 @@ class ProfileScreen @JvmOverloads constructor(
         NAME("name")
     }
 
-    /** What a row of the right-hand list represents. */
-    private enum class RowMode {
-        /** A pack in the selected profile's load order. */
-        PROFILE,
-        /** An installed pack that can be added to the selected profile. */
-        ADD,
-        /** An installed pack in the "All packs" view. */
-        LIBRARY,
-        /** Not a pack: the heading above the built-in packs in the All packs and add lists. */
-        SECTION
-    }
-
     private val logger = LoggerFactory.getLogger("ResourcePackProfiles")
 
     // --- State that survives init() ---
@@ -508,9 +496,8 @@ class ProfileScreen @JvmOverloads constructor(
                 sectioned(
                     userPacks()
                         .filter { query.isEmpty() || packName(it.id).lowercase().contains(query) }
-                        .sortedWith(libraryComparator().thenBy { packName(it.id).lowercase() }),
-                    RowMode.LIBRARY
-                )
+                        .sortedWith(libraryComparator().thenBy { packName(it.id).lowercase() })
+                ) { LibraryPackRow(it) }
             }
             profile == null -> emptyList()
             addMode -> {
@@ -520,15 +507,14 @@ class ProfileScreen @JvmOverloads constructor(
                     minecraft.resourcePackRepository.availablePacks
                         .filter { it.packSource.shouldAddAutomatically() && !it.isRequired && it.id !in inProfile }
                         .filter { query.isEmpty() || packName(it.id).lowercase().contains(query) }
-                        .sortedBy { packName(it.id).lowercase() },
-                    RowMode.ADD
-                )
+                        .sortedBy { packName(it.id).lowercase() }
+                ) { AddPackRow(it) }
             }
-            else -> displayIds().map { PackRow(it, RowMode.PROFILE) }
+            else -> displayIds().map { ProfilePackRow(it) }
         }
         packList.replaceEntries(rows)
         packList.setScrollAmount(scroll)
-        picks.retain(rows.mapTo(HashSet()) { it.packId })
+        picks.retain(rows.filterIsInstance<PackRow>().mapTo(HashSet()) { it.packId })
     }
 
     // --- Picking several packs ---
@@ -539,7 +525,10 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     /** Ids of the pack rows shown, in list order (section headings left out). */
-    private fun shownPackIds(): List<String> = packList.children().filter { it.mode != RowMode.SECTION }.map { it.packId }
+    private fun shownPackIds(): List<String> = packList.children().filterIsInstance<PackRow>().map { it.packId }
+
+    /** The row showing [packId], if the list shows it. */
+    private fun rowFor(packId: String): PackRow? = packList.children().filterIsInstance<PackRow>().firstOrNull { it.packId == packId }
 
     /** The picked packs in list order. */
     private fun pickedInOrder(): List<String> = picks.inOrder(shownPackIds())
@@ -549,7 +538,7 @@ class ProfileScreen @JvmOverloads constructor(
         if (packId in picks) pickedInOrder() else listOf(packId)
 
     /** Picks just [row]. Add mode only picks on purpose (Ctrl/Shift), since a plain click adds the pack. */
-    private fun pickOnly(row: PackRow) = picks.only(row.packId, pick = row.mode != RowMode.ADD)
+    private fun pickOnly(row: PackRow) = picks.only(row.packId, pick = row.clickPicks)
 
     /** Moves the list's cursor to [row]. Unless [keepPicks], the picks become just that row. */
     private fun selectRow(row: PackRow, keepPicks: Boolean = false) {
@@ -577,11 +566,11 @@ class ProfileScreen @JvmOverloads constructor(
      * Rows for [packs], keeping their order: pack files first, then the built-in packs (from the
      * game or mods) in their own section, so the rows themselves don't need to say so.
      */
-    private fun sectioned(packs: List<Pack>, mode: RowMode): List<PackRow> {
+    private fun sectioned(packs: List<Pack>, row: (String) -> PackRow): List<PackListEntry> {
         val (files, builtIns) = packs.partition { isPackFile(it.id) }
-        val rows = files.map { PackRow(it.id, mode) }
+        val rows = files.map { row(it.id) }
         if (builtIns.isEmpty()) return rows
-        return rows + PackRow("", RowMode.SECTION) + builtIns.map { PackRow(it.id, mode) }
+        return rows + SectionRow() + builtIns.map { row(it.id) }
     }
 
     /** Shows/hides the detail widgets for the current selection and reloads their contents. */
@@ -990,7 +979,7 @@ class ProfileScreen @JvmOverloads constructor(
         }
         if (moved) {
             commitPacks(ids.reversed(), t("status.resourcepackprofiles.reordered"))
-            packList.children().firstOrNull { it.packId == focusId }?.let {
+            rowFor(focusId)?.let {
                 selectRow(it, keepPicks = true)
                 packList.setFocused(it)
             }
@@ -1268,7 +1257,7 @@ class ProfileScreen @JvmOverloads constructor(
     private fun extractLiftedRows(context: GuiGraphicsExtractor) {
         if (!drag.isLifting) return
         val rows = packList.children()
-        val lifted = drag.lifted().mapNotNull { id -> rows.firstOrNull { it.packId == id } }
+        val lifted = drag.lifted().mapNotNull { id -> rows.filterIsInstance<ProfilePackRow>().firstOrNull { it.packId == id } }
         val first = lifted.firstOrNull() ?: return
         val top = drag.liftedTop()
         val left = first.x
@@ -1298,10 +1287,10 @@ class ProfileScreen @JvmOverloads constructor(
         if (drop != null) {
             commitPacks(drop.order.reversed(), t("status.resourcepackprofiles.reordered"))
             rebuildPackList()
-            packList.children().getOrNull(drop.leadIndex)?.let { selectRow(it, keepPicks = drop.group.size > 1) }
+            (packList.children().getOrNull(drop.leadIndex) as? PackRow)?.let { selectRow(it, keepPicks = drop.group.size > 1) }
         } else if (collapse != null) {
             // A plain click on one of several picked packs, without dragging: pick just that one.
-            packList.children().firstOrNull { it.packId == collapse }?.let { selectRow(it) }
+            rowFor(collapse)?.let { selectRow(it) }
         }
         // Still let the screen clear its own drag state.
         super.mouseReleased(event)
@@ -1902,111 +1891,188 @@ class ProfileScreen @JvmOverloads constructor(
         }
     }
 
-    private inner class PackList(w: Int, h: Int, top: Int) : FlatList<PackRow>(w, h, top, PACK_ROW_HEIGHT) {
+    private inner class PackList(w: Int, h: Int, top: Int) : FlatList<PackListEntry>(w, h, top, PACK_ROW_HEIGHT) {
         // Called for clicks and keyboard navigation alike. Moving with the keys picks the row
         // moved to, as in a file browser; row clicks manage the picks themselves.
-        override fun setSelected(entry: PackRow?) {
+        override fun setSelected(entry: PackListEntry?) {
             super.setSelected(entry)
             if (rowClicking || entry == null) return
-            if (entry.mode == RowMode.SECTION) picks.clear() else pickOnly(entry)
+            if (entry is PackRow) pickOnly(entry) else picks.clear()
+        }
+    }
+
+    /** An entry of the right-hand list: a [PackRow], or a [SectionRow] heading. */
+    private abstract inner class PackListEntry : ObjectSelectionList.Entry<PackListEntry>()
+
+    /** The heading above the built-in packs in the All Packs and Add Packs lists. Not selectable. */
+    private inner class SectionRow : PackListEntry() {
+        private val label get() = t("label.resourcepackprofiles.built_in_section")
+
+        override fun getNarration(): Component = label
+
+        override fun extractContent(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, delta: Float) {
+            // A small heading with a rule after it, sitting low in the row so it reads as the
+            // start of the rows below rather than one of them.
+            val ty = y + height - 11
+            context.text(font, label, x + 6, ty, Theme.TEXT_MUTED, true)
+            val ruleX = x + 6 + font.width(label) + 6
+            context.fill(ruleX, ty + 4, x + width - 8, ty + 5, Theme.DIVIDER)
         }
     }
 
     /**
-     * One pack in the right-hand list. What it shows and does depends on [mode]:
-     * - [RowMode.PROFILE]: drag to reorder, tick box to switch it off, x to remove, a status label
-     *   (missing, or made for another game version), and a version button: "Update" when a newer
-     *   version is known, with a chevron that opens the list of all versions.
-     * - [RowMode.ADD]: click to add the pack to the profile.
-     * - [RowMode.LIBRARY]: shows how many profiles use the pack; x moves its file to the trash.
+     * One pack in the right-hand list. This base class handles what every kind of pack row shares:
+     * Ctrl/Shift-click picking, the highlight, the icon and name (orange, with vanilla's tooltip,
+     * for packs made for another game version), and the remove (x) and check-for-updates icons
+     * that appear on hover just left of the row's own content at its right edge.
      *
-     * Profile and library rows of pack files also get a check-for-updates button on hover.
+     * The kinds: [ProfilePackRow] (a pack in the profile's load order), [AddPackRow] (a pack that
+     * can be added to it) and [LibraryPackRow] (a pack in the All Packs view).
      */
-    private inner class PackRow(val packId: String, val mode: RowMode) : ObjectSelectionList.Entry<PackRow>() {
+    private abstract inner class PackRow(val packId: String) : PackListEntry() {
 
-        override fun getNarration(): Component =
-            if (mode == RowMode.SECTION) t("label.resourcepackprofiles.built_in_section") else Component.literal(packName(packId))
+        override fun getNarration(): Component = Component.literal(packName(packId))
 
-        private val index get() = packList.children().indexOf(this)
-        private val update get() = if (mode == RowMode.ADD) null else (checks[packId] as? PackCheck.UpdateAvailable)?.update
+        /** Whether a plain click picks the row. Add rows add the pack instead, and pick only on purpose. */
+        open val clickPicks: Boolean get() = true
 
-        // Right-hand side: the row's own content (the update version and tick, a status or usage
-        // label, the Download button) sits against the row's right edge. The hover icons (versions,
-        // check for updates, remove) appear just left of that content on the hovered row, so no
-        // row reserves empty space for them.
-        private fun rowRight() = x + width - 8
-        private fun toggleX() = x + 13
-
-        /** Left edge of the right-hand content, or the row's edge when there is none. */
-        private fun contentLeft(): Int {
-            val pending = update
-            return when (mode) {
-                RowMode.PROFILE -> when {
-                    versioned && pending != null -> updateTextX(pending)
-                    packId !in packsById -> labelX(missingLabel().first)
-                    builtIn -> labelX(builtInLabel())
-                    else -> rowRight() + 8
-                }
-                RowMode.LIBRARY -> if (pending != null && !isInstalled(pending)) downloadX() else usageX()
-                RowMode.ADD, RowMode.SECTION -> rowRight() + 8
-            }
-        }
-        private fun removeX() = contentLeft() - 10 - Icon.CLOSE.width
-        private fun checkX() = removeX() - 9 - Icon.REFRESH.width
-        // Missing packs have no refresh icon, so the versions icon takes its place.
-        private fun versionsX() = (if (checkable) checkX() else removeX()) - 9 - VERSIONS_SLOT
-
-        private fun overRemove(mx: Double) = mx >= removeX() - 5 && mx < removeX() + Icon.CLOSE.width + 4
-        private fun overCheck(mx: Double) = mx >= checkX() - 4 && mx < removeX() - 5
-        private fun overVersions(mx: Double) =
-            mx >= versionsX() - 4 && mx < (if (checkable) checkX() - 4 else removeX() - 5)
-
-        /**
-         * A pack that comes with the game or a mod instead of from a file in the resourcepacks
-         * folder. It has no updates and can't be deleted, so its row is labelled to say why.
-         */
-        private val builtIn get() = !isPackFile(packId) && packId in packsById
-        private fun builtInLabel(): Component = t("label.resourcepackprofiles.built_in")
-
-        /** Draws the "Built-in" label right-aligned at [right] and returns its left edge. */
-        private fun drawBuiltIn(context: GuiGraphicsExtractor, right: Int, centerY: Int): Int {
-            val label = builtInLabel()
-            val lx = right - font.width(label)
-            context.text(font, label, lx, centerY - 4, Theme.TEXT_MUTED, true)
-            return lx
-        }
-
-        /** Only pack files can be deleted; built-in and mod-provided packs have no file. */
-        private val deletable get() = mode == RowMode.LIBRARY && isPackFile(packId)
+        /** Whether the row offers the remove (x) icon on hover. */
+        protected open val removable: Boolean get() = false
 
         /** Only installed pack files can be looked up on Modrinth. */
-        private val checkable get() = mode != RowMode.ADD && isPackFile(packId) && packId in packsById
+        protected open val checkable: Boolean get() = isPackFile(packId) && packId in packsById
 
-        /** Whether this row has the version button (profile rows of installed pack files). */
-        private val versioned get() = mode == RowMode.PROFILE && isPackFile(packId)
+        /** A pack the profile uses but that isn't installed. */
+        protected open val missingFile: Boolean get() = false
 
-        /** A pack file the profile uses but that isn't installed. Its version list is how to replace it. */
-        private val findable get() = versioned && packId !in packsById
+        /** Drawn faded: a pack switched off in the profile. */
+        protected open val dimmed: Boolean get() = false
 
-        // A row with an update shows the new version and a tick box at the row's right edge.
-        // Ticked packs are the ones "Update N Selected" will update.
-        private fun tickX() = rowRight() - TOGGLE_SIZE
-        private fun updateText(pending: PackUpdate): String =
-            ScreenUtils.truncate(font, pending.newVersion, UPDATE_LABEL_MAX)
-        private fun updateTextX(pending: PackUpdate) = tickX() - 5 - font.width(updateText(pending))
-        private fun overUpdateTick(mx: Double, pending: PackUpdate) = mx >= updateTextX(pending) - 2 && mx < rowRight() + 3
+        /** Drawn as part of the lifted card while being dragged. */
+        protected open val lifted: Boolean get() = false
 
-        /** "Missing", or "Downloaded" once this batch has fetched the file (before the list reloads). */
-        private fun missingLabel(): Pair<Component, Int> =
-            if (justDownloaded(packId)) t("label.resourcepackprofiles.pack_downloaded") to Theme.SUCCESS
-            else t("label.resourcepackprofiles.pack_missing") to Theme.DANGER
+        /** The update found for this pack, if any. */
+        protected val update: PackUpdate? get() = (checks[packId] as? PackCheck.UpdateAvailable)?.update
+
+        /** Whether this row is one of several picked, so its actions apply to all of them. */
+        protected val many: Boolean get() = picks.isOneOfMany(packId)
+
+        /** The row whose version list is open counts as hovered, so it stays lit under the list. */
+        protected val menuAnchor: Boolean get() = menu.isOpen && menu.owner == packId
+
+        protected val centerY: Int get() = y + height / 2
+
+        // The row's own content (labels, the update tick, the Download chip) sits against its
+        // right edge. Hover icons appear just left of it, so no row reserves empty space for them.
+        protected fun rowRight() = x + width - 8
 
         /** Left edge of a label right-aligned at the row's edge. */
-        private fun labelX(label: Component) = rowRight() - font.width(label)
+        protected fun labelX(label: Component) = rowRight() - font.width(label)
 
-        /** Why the pack is flagged for a different game version, or null if it is compatible. */
-        private fun compatibilityWarning(): Component? =
-            packsById[packId]?.compatibility?.takeIf { !it.isCompatible }?.description
+        /** Left edge of the right-hand content, or the row's edge when there is none. */
+        protected open fun contentLeft(): Int = rowRight() + 8
+
+        protected fun removeX() = contentLeft() - 10 - Icon.CLOSE.width
+        protected fun checkX() = removeX() - 9 - Icon.REFRESH.width
+        protected fun overRemove(mx: Double) = mx >= removeX() - 5 && mx < removeX() + Icon.CLOSE.width + 4
+        protected fun overCheck(mx: Double) = mx >= checkX() - 4 && mx < removeX() - 5
+
+        /** Picked packs (or just this one) that can be checked on Modrinth. */
+        private fun checkTargets() = targetsOf(packId).filter { isPackFile(it) && it in packsById }
+
+        final override fun mouseClicked(event: MouseButtonEvent, doubled: Boolean): Boolean {
+            if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) return false
+            // The row decides what the click does to the picks, so the list must not reset them.
+            rowClicking = true
+            val toggle = event.hasControlDownWithQuirk()
+            if (toggle || event.hasShiftDown()) {
+                pickRow(this, range = event.hasShiftDown(), toggle = toggle)
+                return true
+            }
+            if (checkable && overCheck(event.x())) {
+                val ids = checkTargets()
+                jobs.check(ids, single = ids.size == 1)
+                return true
+            }
+            return onClick(event)
+        }
+
+        /** A plain left click that no shared control took. */
+        protected abstract fun onClick(event: MouseButtonEvent): Boolean
+
+        override fun extractContent(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, delta: Float) =
+            extractRow(context, mouseX, mouseY, hovered)
+
+        protected fun extractRow(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean) {
+            val rowHot = hovered || menuAnchor
+            // Picks are only marked when they mean something: several of them, or any in add mode.
+            val picked = packId in picks && (picks.size > 1 || !clickPicks)
+            val isSelected = clickPicks && packList.selected === this
+            when {
+                lifted || picked -> context.fill(x, y, x + width, y + height, Theme.ROW_SELECTED)
+                rowHot || isSelected -> context.fill(x, y, x + width, y + height, Theme.ROW_HOVER)
+            }
+            if (picked) context.fill(x, y, x + 2, y + height, Theme.ACCENT)
+
+            var cursor = extractLeading(context, mouseX, mouseY, hovered, rowHot)
+            val icon = packIcon(packId)
+            if (dimmed) context.blit(RenderPipelines.GUI_TEXTURED, icon, cursor, centerY - 8, 0f, 0f, 16, 16, 16, 16, DISABLED_TINT)
+            else context.blit(RenderPipelines.GUI_TEXTURED, icon, cursor, centerY - 8, 0f, 0f, 16, 16, 16, 16)
+            cursor += 16 + 5
+
+            val mx = mouseX.toDouble()
+            val showRemove = rowHot && removable
+            val showCheck = rowHot && checkable
+            if (showRemove) {
+                val hot = overRemove(mx)
+                Icon.CLOSE.draw(context, removeX(), centerY - Icon.CLOSE.height / 2, if (hot) Theme.DANGER else Theme.TEXT_SECONDARY)
+                if (hot) removeTooltip()?.let { context.setTooltipForNextFrame(it, mouseX, mouseY) }
+            }
+            if (showCheck) {
+                val hot = overCheck(mx)
+                Icon.REFRESH.draw(context, checkX(), centerY - Icon.REFRESH.height / 2, if (hot) Theme.TEXT else Theme.TEXT_SECONDARY)
+                if (hot) {
+                    val tip = if (many) t("tooltip.resourcepackprofiles.check_picked") else checkResult() ?: t("tooltip.resourcepackprofiles.check_pack")
+                    context.setTooltipForNextFrame(tip, mouseX, mouseY)
+                }
+            }
+
+            var rightEdge = minOf(extractTrailing(context, mouseX, mouseY, hovered, rowHot), contentLeft() - 6)
+            leftmostHoverIcon(rowHot, showCheck, showRemove)?.let { rightEdge = minOf(rightEdge, it - 6) }
+
+            // Outdated packs are shown like vanilla does it: the name is coloured, nothing is added
+            // to the row, and hovering the name gives Minecraft's own explanation. (A warning icon
+            // was tried; with most packs flagged it only made the lists busier.)
+            val compat = packsById[packId]?.compatibility?.takeIf { !it.isCompatible }?.description
+            val outdated = compat != null && !missingFile
+            val nameColor = when {
+                missingFile && !justDownloaded(packId) -> Theme.DANGER
+                dimmed -> Theme.TEXT_MUTED
+                outdated -> Theme.WARNING
+                else -> Theme.TEXT
+            }
+            val name = ScreenUtils.truncate(font, packName(packId), rightEdge - cursor)
+            context.text(font, name, cursor, centerY - 4, nameColor, true)
+            if (outdated && hovered && mouseX >= cursor && mouseX < cursor + font.width(name)) {
+                context.setTooltipForNextFrame(compat, mouseX, mouseY)
+            }
+        }
+
+        /** Draws whatever comes before the icon and returns where the icon goes. */
+        protected open fun extractLeading(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, rowHot: Boolean): Int = x + 5
+
+        /** Draws the row's own content at its right edge and returns where the name must end. */
+        protected abstract fun extractTrailing(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, rowHot: Boolean): Int
+
+        /** Left edge of the leftmost hover icon being shown, which the name must stay clear of. */
+        protected open fun leftmostHoverIcon(rowHot: Boolean, showCheck: Boolean, showRemove: Boolean): Int? = when {
+            !rowHot -> null
+            showCheck -> checkX()
+            showRemove -> removeX()
+            else -> null
+        }
+
+        protected open fun removeTooltip(): Component? = null
 
         /**
          * Why the last update check offered nothing for this pack, or null if it was never checked
@@ -2023,125 +2089,105 @@ class ProfileScreen @JvmOverloads constructor(
             }
             return t("tooltip.resourcepackprofiles.check_$key")
         }
+    }
 
-        /** How the pack is used, or null for an unused built-in pack (it can't be cleaned up anyway). */
-        private fun usageLabel(): Pair<Component, Int>? {
-            val uses = packUsage[packId] ?: 0
+    /**
+     * A pack in the selected profile's load order: drag to reorder, tick box to switch it off,
+     * x to remove, a status label (missing, or built in), and a version list on hover. A pack
+     * with a newer version shows it with a green tick box; ticked ones are what "Update N
+     * Selected" updates.
+     */
+    private inner class ProfilePackRow(packId: String) : PackRow(packId) {
+        private val index get() = packList.children().indexOf(this)
+
+        /** Set while this row is drawn as part of the lifted card. */
+        private var drawingLifted = false
+
+        override val removable get() = true
+        override val missingFile get() = packId !in packsById
+        override val dimmed get() = selected?.isDisabled(packId) == true
+        override val lifted get() = drawingLifted
+
+        /** Pack files have a version list: switch versions, or find one for a missing pack. */
+        private val versioned get() = isPackFile(packId)
+
+        /** A pack file the profile uses but that isn't installed. Its version list is how to replace it. */
+        private val findable get() = versioned && missingFile
+
+        /** Comes with the game or a mod: it has no updates and can't be deleted, so the row says so. */
+        private val builtIn get() = !isPackFile(packId) && packId in packsById
+
+        private fun toggleX() = x + 13
+        // Missing packs have no refresh icon, so the versions icon takes its place.
+        private fun versionsX() = (if (checkable) checkX() else removeX()) - 9 - VERSIONS_SLOT
+        private fun overVersions(mx: Double) = mx >= versionsX() - 4 && mx < (if (checkable) checkX() - 4 else removeX() - 5)
+        private fun overToggle(mx: Double) = mx >= toggleX() - 2 && mx < toggleX() + TOGGLE_SIZE + 2
+
+        private fun tickX() = rowRight() - TOGGLE_SIZE
+        private fun updateText(pending: PackUpdate): String = ScreenUtils.truncate(font, pending.newVersion, UPDATE_LABEL_MAX)
+        private fun updateTextX(pending: PackUpdate) = tickX() - 5 - font.width(updateText(pending))
+        private fun overUpdateTick(mx: Double, pending: PackUpdate) = mx >= updateTextX(pending) - 2 && mx < rowRight() + 3
+
+        /** "Missing", or "Downloaded" once this batch has fetched the file (before the list reloads). */
+        private fun missingLabel(): Pair<Component, Int> =
+            if (justDownloaded(packId)) t("label.resourcepackprofiles.pack_downloaded") to Theme.SUCCESS
+            else t("label.resourcepackprofiles.pack_missing") to Theme.DANGER
+
+        private fun builtInLabel(): Component = t("label.resourcepackprofiles.built_in")
+
+        override fun contentLeft(): Int {
+            val pending = update
             return when {
-                uses == 1 -> t("label.resourcepackprofiles.used_by_one") to Theme.TEXT_MUTED
-                uses > 1 -> t("label.resourcepackprofiles.used_by", uses) to Theme.TEXT_MUTED
-                packId in enabledNow -> t("label.resourcepackprofiles.enabled_now") to Theme.TEXT_MUTED
-                !isPackFile(packId) -> null
-                else -> t("label.resourcepackprofiles.unused") to Theme.ACTIVE
+                versioned && pending != null -> updateTextX(pending)
+                missingFile -> labelX(missingLabel().first)
+                builtIn -> labelX(builtInLabel())
+                else -> super.contentLeft()
             }
         }
 
-        /** Left edge of the usage label, or the row's edge when there is none. */
-        private fun usageX(): Int = usageLabel()?.let { labelX(it.first) } ?: (rowRight() + 8)
-
-        // In the library the usage label comes first and the download button sits to its left.
-        private fun downloadWord(): Component = t("button.resourcepackprofiles.download")
-        private fun downloadRight() = usageX() - 8
-        private fun downloadX() = downloadRight() - font.width(downloadWord()) - 9
-
-        /** Picked packs (or just this one) that can be checked on Modrinth. */
-        private fun checkTargets() = targetsOf(packId).filter { isPackFile(it) && it in packsById }
-
-        /** Updates of the picked packs (or just this one) whose files aren't downloaded yet. */
-        private fun downloadTargets() =
-            targetsOf(packId).mapNotNull { (checks[it] as? PackCheck.UpdateAvailable)?.update }.filter { !isInstalled(it) }
-
-        override fun mouseClicked(event: MouseButtonEvent, doubled: Boolean): Boolean {
-            if (event.button() != InputConstants.MOUSE_BUTTON_LEFT || mode == RowMode.SECTION) return false
-            // The row decides what the click does to the picks, so the list must not reset them.
-            rowClicking = true
+        override fun onClick(event: MouseButtonEvent): Boolean {
             val mx = event.x()
-            val toggle = event.hasControlDownWithQuirk()
-            if (toggle || event.hasShiftDown()) {
-                pickRow(this, range = event.hasShiftDown(), toggle = toggle)
-                return true
-            }
-            if (mode == RowMode.ADD) {
-                addPacks(targetsOf(packId))
-                return true
-            }
-            if (checkable && overCheck(mx)) {
-                val ids = checkTargets()
-                jobs.check(ids, single = ids.size == 1)
-                return true
-            }
             val pending = update
-            if (mode == RowMode.LIBRARY) {
-                when {
-                    deletable && overRemove(mx) -> trashFromRow(targetsOf(packId).filter { isPackFile(it) })
-                    pending != null && !isInstalled(pending) && mx >= downloadX() - 1 && mx < downloadRight() + 1 ->
-                        jobs.downloadOnly(downloadTargets())
-                    else -> selectRow(this)
+            when {
+                overRemove(mx) -> removePacks(targetsOf(packId))
+                overToggle(mx) -> togglePacks(targetsOf(packId), packId)
+                versioned && overVersions(mx) -> openVersions(packId, versionsX() + VERSIONS_SLOT, y + height / 2 + 8)
+                versioned && pending != null && overUpdateTick(mx, pending) -> {
+                    // Every picked pack with an update follows this one's tick.
+                    val ids = targetsOf(packId).filter { checks[it] is PackCheck.UpdateAvailable }
+                    if (packId in tickedUpdates) tickedUpdates.removeAll(ids.toSet()) else tickedUpdates.addAll(ids)
                 }
-                return true
+                else -> pressToDrag(event)
             }
+            return true
+        }
 
-            if (overRemove(mx)) {
-                removePacks(targetsOf(packId))
-                return true
-            }
-            if (mx >= toggleX() - 2 && mx < toggleX() + TOGGLE_SIZE + 2) {
-                togglePacks(targetsOf(packId), packId)
-                return true
-            }
-            if (versioned && overVersions(mx)) {
-                openVersions(packId, versionsX() + VERSIONS_SLOT, y + height / 2 + 8)
-                return true
-            }
-            if (versioned && pending != null && overUpdateTick(mx, pending)) {
-                // Every picked pack with an update follows this one's tick.
-                val ids = targetsOf(packId).filter { checks[it] is PackCheck.UpdateAvailable }
-                if (packId in tickedUpdates) tickedUpdates.removeAll(ids.toSet()) else tickedUpdates.addAll(ids)
-                return true
-            }
-            // Pressing one of several picked packs keeps them all picked, so they can be dragged
-            // together; releasing without dragging narrows the picks to this one.
-            val group = if (picks.isOneOfMany(packId)) pickedInOrder() else listOf(packId)
+        /**
+         * Selects the row and arms a drag, which only becomes a reorder once the mouse moves.
+         * Pressing one of several picked packs keeps them all picked, so they can be dragged
+         * together; releasing without dragging narrows the picks to this one.
+         */
+        private fun pressToDrag(event: MouseButtonEvent) {
+            val group = if (many) pickedInOrder() else listOf(packId)
             if (group.size > 1) {
                 collapseTo = packId
                 selectRow(this, keepPicks = true)
             } else {
                 selectRow(this)
             }
-            // Arm a drag; it only becomes a reorder once the mouse actually moves.
             drag.press(displayIds(), index, group, event.y(), y)
-            return true
         }
 
         override fun keyPressed(event: KeyEvent): Boolean {
             val key = event.key()
-            val isDelete = key == InputConstants.KEY_DELETE || key == InputConstants.KEY_BACKSPACE
-            when (mode) {
-                RowMode.SECTION -> return false
-                RowMode.ADD -> {
-                    if (event.isConfirmation || event.isSelection) {
-                        addPacks(targetsOf(packId))
-                        return true
-                    }
-                    return false
-                }
-                RowMode.LIBRARY -> {
-                    if (isDelete && deletable) {
-                        trashFromRow(targetsOf(packId).filter { isPackFile(it) })
-                        return true
-                    }
-                    return false
-                }
-                RowMode.PROFILE -> {}
-            }
-            if (isDelete) {
+            if (key == InputConstants.KEY_DELETE || key == InputConstants.KEY_BACKSPACE) {
                 removePacks(targetsOf(packId))
                 return true
             }
             // Shift+Up/Down reorders the focused pack, or all picked ones (plain Up/Down navigates)
             if (event.hasShiftDown() && (event.isUp || event.isDown)) {
                 val delta = if (event.isUp) -1 else 1
-                return if (picks.isOneOfMany(packId)) movePicked(delta, packId) else movePack(index, delta)
+                return if (many) movePicked(delta, packId) else movePack(index, delta)
             }
             // Space or Enter switches the focused pack (or all picked ones) off and on.
             if (event.isSelection) {
@@ -2150,9 +2196,6 @@ class ProfileScreen @JvmOverloads constructor(
             }
             return false
         }
-
-        /** Set while this row is drawn as part of the lifted card. */
-        private var drawingLifted = false
 
         /** Draws the row as it looks while dragged: no hover state, at its own position. */
         fun extractLifted(context: GuiGraphicsExtractor) {
@@ -2165,7 +2208,7 @@ class ProfileScreen @JvmOverloads constructor(
         }
 
         override fun extractContent(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, delta: Float) {
-            if (mode == RowMode.PROFILE && drag.isLifted(packId)) {
+            if (drag.isLifted(packId)) {
                 // The slot the lifted row will drop into.
                 context.fill(x, y, x + width, y + height, 0x30000000)
                 Theme.border(context, x, y, width, height, Theme.DIVIDER)
@@ -2186,205 +2229,189 @@ class ProfileScreen @JvmOverloads constructor(
             }
         }
 
-        private fun extractRow(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean) {
-            if (mode == RowMode.SECTION) {
-                // A small heading with a rule after it, sitting low in the row so it reads as the
-                // start of the rows below rather than one of them.
-                val label = t("label.resourcepackprofiles.built_in_section")
-                val ty = y + height - 11
-                context.text(font, label, x + 6, ty, Theme.TEXT_MUTED, true)
-                val ruleX = x + 6 + font.width(label) + 6
-                context.fill(ruleX, ty + 4, x + width - 8, ty + 5, Theme.DIVIDER)
-                return
-            }
-            val inProfile = mode == RowMode.PROFILE
-            val dragging = drawingLifted
-            val isSelected = mode != RowMode.ADD && packList.selected === this
-            // The row whose version list is open counts as hovered, so it keeps its highlight and
-            // hover icons while the pointer is over the list.
-            val menuAnchor = menu.isOpen && menu.owner == packId
-            val rowHot = hovered || menuAnchor
-            // Picks are only marked when they mean something: several of them, or any in add mode.
-            val picked = packId in picks && (picks.size > 1 || mode == RowMode.ADD)
-            val many = picks.isOneOfMany(packId)
-            when {
-                dragging || picked -> context.fill(x, y, x + width, y + height, Theme.ROW_SELECTED)
-                rowHot || isSelected -> context.fill(x, y, x + width, y + height, Theme.ROW_HOVER)
-            }
-            if (picked) context.fill(x, y, x + 2, y + height, Theme.ACCENT)
+        override fun extractLeading(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, rowHot: Boolean): Int {
+            Icon.GRIP.draw(context, x + 5, centerY - Icon.GRIP.height / 2, if (rowHot || lifted) Theme.TEXT else Theme.TEXT_MUTED)
 
-            val centerY = y + height / 2
+            // Tick box: ticked when the pack is switched on in this profile. Neutral on purpose, so
+            // it can't be mistaken for the green update tick on the right. Always drawn: hiding it
+            // until hover made the feature too hard to discover.
+            val tx = toggleX()
+            val ty = centerY - TOGGLE_SIZE / 2
+            val hot = hovered && overToggle(mouseX.toDouble())
+            Theme.border(context, tx, ty, TOGGLE_SIZE, TOGGLE_SIZE, if (hot) Theme.TEXT else Theme.CONTROL_BORDER)
+            if (!dimmed) Icon.TICK.drawCentered(context, tx, ty, TOGGLE_SIZE, TOGGLE_SIZE, if (hot) Theme.TEXT else Theme.TEXT_SECONDARY)
+            if (hot) {
+                val tip = when {
+                    many && dimmed -> t("tooltip.resourcepackprofiles.enable_picked")
+                    many -> t("tooltip.resourcepackprofiles.disable_picked")
+                    dimmed -> t("tooltip.resourcepackprofiles.enable_pack")
+                    else -> t("tooltip.resourcepackprofiles.disable_pack")
+                }
+                context.setTooltipForNextFrame(tip, mouseX, mouseY)
+            }
+            return tx + TOGGLE_SIZE + 5
+        }
+
+        override fun extractTrailing(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, rowHot: Boolean): Int {
             val mx = mouseX.toDouble()
-            val disabled = inProfile && selected?.isDisabled(packId) == true
-            var cursor = x + 5
-            if (inProfile) {
-                Icon.GRIP.draw(context, cursor, centerY - Icon.GRIP.height / 2, if (rowHot || dragging) Theme.TEXT else Theme.TEXT_MUTED)
-
-                // Tick box: filled when the pack is switched on in this profile. Neutral on purpose,
-                // so it can't be mistaken for the green update tick on the right.
-                val tx = toggleX()
-                val ty = centerY - TOGGLE_SIZE / 2
-                val overToggle = hovered && mouseX >= tx - 2 && mouseX < tx + TOGGLE_SIZE + 2
-                // Always drawn: hiding it until hover made the feature too hard to discover.
-                Theme.border(context, tx, ty, TOGGLE_SIZE, TOGGLE_SIZE, if (overToggle) Theme.TEXT else Theme.CONTROL_BORDER)
-                if (!disabled) {
-                    Icon.TICK.drawCentered(context, tx, ty, TOGGLE_SIZE, TOGGLE_SIZE, if (overToggle) Theme.TEXT else Theme.TEXT_SECONDARY)
-                }
-                if (overToggle) {
-                    val tip = when {
-                        many && disabled -> t("tooltip.resourcepackprofiles.enable_picked")
-                        many -> t("tooltip.resourcepackprofiles.disable_picked")
-                        disabled -> t("tooltip.resourcepackprofiles.enable_pack")
-                        else -> t("tooltip.resourcepackprofiles.disable_pack")
-                    }
-                    context.setTooltipForNextFrame(tip, mouseX, mouseY)
-                }
-                cursor = tx + TOGGLE_SIZE + 5
-            }
-            if (disabled) {
-                context.blit(RenderPipelines.GUI_TEXTURED, packIcon(packId), cursor, centerY - 8, 0f, 0f, 16, 16, 16, 16, DISABLED_TINT)
-            } else {
-                context.blit(RenderPipelines.GUI_TEXTURED, packIcon(packId), cursor, centerY - 8, 0f, 0f, 16, 16, 16, 16)
-            }
-            cursor += 16 + 5
-
-            val missing = inProfile && packId !in packsById
-            val compat = compatibilityWarning()
-            val pending = update
             var rightEdge = x + width - 4
-            var nameColor = when {
-                missing && !justDownloaded(packId) -> Theme.DANGER
-                disabled -> Theme.TEXT_MUTED
-                else -> Theme.TEXT
-            }
-
-            // Hover buttons shared by profile and library rows.
-            val showRemove = rowHot && (inProfile || deletable)
-            val showCheck = rowHot && checkable
-            val hotRemove = showRemove && overRemove(mx)
-            val hotCheck = showCheck && overCheck(mx)
-            if (showRemove) {
-                Icon.CLOSE.draw(context, removeX(), centerY - Icon.CLOSE.height / 2, if (hotRemove) Theme.DANGER else Theme.TEXT_SECONDARY)
-                if (hotRemove) {
-                    val tip = when {
-                        inProfile && many -> t("tooltip.resourcepackprofiles.remove_picked")
-                        inProfile -> null
-                        many -> t("tooltip.resourcepackprofiles.trash_picked")
-                        else -> t("tooltip.resourcepackprofiles.trash_pack")
-                    }
-                    if (tip != null) context.setTooltipForNextFrame(tip, mouseX, mouseY)
+            // Shown on hover, and always on a missing pack so the way to replace it is visible.
+            if (versioned && (rowHot || findable)) {
+                // The version list (any version, or switch back) is a hover icon. It stays lit
+                // while its list is open.
+                val hot = overVersions(mx) || menuAnchor
+                Icon.CHEVRON.draw(
+                    context,
+                    versionsX() + (VERSIONS_SLOT - Icon.CHEVRON.width) / 2,
+                    centerY - Icon.CHEVRON.height / 2,
+                    if (hot) Theme.TEXT else Theme.TEXT_SECONDARY
+                )
+                if (hot && !menuAnchor) {
+                    val tip = if (findable) "tooltip.resourcepackprofiles.find_version" else "tooltip.resourcepackprofiles.choose_version"
+                    context.setTooltipForNextFrame(t(tip), mouseX, mouseY)
                 }
             }
-            if (showCheck) {
-                Icon.REFRESH.draw(context, checkX(), centerY - Icon.REFRESH.height / 2, if (hotCheck) Theme.TEXT else Theme.TEXT_SECONDARY)
-                if (hotCheck) {
-                    val tip =
-                        if (many) t("tooltip.resourcepackprofiles.check_picked")
-                        else checkResult() ?: t("tooltip.resourcepackprofiles.check_pack")
-                    context.setTooltipForNextFrame(tip, mouseX, mouseY)
+            val pending = update
+            if (versioned && pending != null) {
+                val ticked = packId in tickedUpdates
+                val tx = tickX()
+                val ty = centerY - TOGGLE_SIZE / 2
+                val lx = updateTextX(pending)
+                val over = hovered && overUpdateTick(mx, pending)
+                // Green whether ticked or not: an unticked update is still an available one.
+                context.text(font, updateText(pending), lx, centerY - 4, Theme.SUCCESS, true)
+                Theme.border(context, tx, ty, TOGGLE_SIZE, TOGGLE_SIZE, if (over) Theme.TEXT else Theme.SUCCESS)
+                if (ticked) context.fill(tx + 2, ty + 2, tx + TOGGLE_SIZE - 2, ty + TOGGLE_SIZE - 2, Theme.SUCCESS)
+                if (over) {
+                    val key = if (ticked) "tooltip.resourcepackprofiles.update_tick_on" else "tooltip.resourcepackprofiles.update_tick_off"
+                    context.setTooltipForNextFrame(t(key, pending.currentVersion, pending.newVersion), mouseX, mouseY)
                 }
+                rightEdge = lx - 6
             }
-            val overButtons = hotRemove || hotCheck
-            val chipY = centerY - CHIP_HEIGHT / 2
-
-            when (mode) {
-                RowMode.ADD -> {
-                    Icon.PLUS.draw(context, rightEdge - Icon.PLUS.width, centerY - Icon.PLUS.height / 2, if (hovered) Theme.TEXT else Theme.TEXT_MUTED)
-                    rightEdge -= Icon.PLUS.width + 6
-                }
-                RowMode.LIBRARY -> {
-                    usageLabel()?.let { (usage, usageColor) ->
-                        val ux = labelX(usage)
-                        context.text(font, usage, ux, centerY - 4, usageColor, true)
-                        rightEdge = ux - 6
-                    }
-
-                    if (pending != null) {
-                        // Once the newer file is downloaded the row shows nothing extra: the Download
-                        // button going away is the signal, and profiles pick the file up when updated.
-                        if (!isInstalled(pending)) {
-                            val dx = downloadX()
-                            val dr = downloadRight()
-                            val over = hovered && mouseX >= dx - 1 && mouseX < dr + 1
-                            context.fill(dx, chipY, dr, chipY + CHIP_HEIGHT, Theme.withAlpha(Theme.SUCCESS, if (over) 0.38f else 0.22f))
-                            context.text(font, downloadWord(), dx + 5, chipY + 2, Theme.SUCCESS, true)
-                            if (over) {
-                                val tip =
-                                    if (many) t("tooltip.resourcepackprofiles.download_picked")
-                                    else t("tooltip.resourcepackprofiles.download_update", pending.currentVersion, pending.newVersion)
-                                context.setTooltipForNextFrame(tip, mouseX, mouseY)
-                            }
-                            rightEdge = dx - 6
-                        }
-                    }
-                }
-                RowMode.PROFILE -> {
-                    // Shown on hover, and always on a missing pack so the way to replace it is visible.
-                    if (versioned && (rowHot || findable)) {
-                        // The version list (any version, or switch back) is a hover icon. It stays
-                        // lit while its list is open.
-                        val hot = overVersions(mx) || menuAnchor
-                        Icon.CHEVRON.draw(
-                            context,
-                            versionsX() + (VERSIONS_SLOT - Icon.CHEVRON.width) / 2,
-                            centerY - Icon.CHEVRON.height / 2,
-                            if (hot) Theme.TEXT else Theme.TEXT_SECONDARY
-                        )
-                        if (hot && !menuAnchor) {
-                            val tip = if (findable) "tooltip.resourcepackprofiles.find_version" else "tooltip.resourcepackprofiles.choose_version"
-                            context.setTooltipForNextFrame(t(tip), mouseX, mouseY)
-                        }
-                    }
-                    if (versioned && pending != null) {
-                        val ticked = packId in tickedUpdates
-                        val tx = tickX()
-                        val ty = centerY - TOGGLE_SIZE / 2
-                        val lx = updateTextX(pending)
-                        val over = hovered && overUpdateTick(mx, pending)
-                        // Green whether ticked or not: an unticked update is still an available one.
-                        context.text(font, updateText(pending), lx, centerY - 4, Theme.SUCCESS, true)
-                        val boxColor = if (over) Theme.TEXT else Theme.SUCCESS
-                        Theme.border(context, tx, ty, TOGGLE_SIZE, TOGGLE_SIZE, boxColor)
-                        if (ticked) context.fill(tx + 2, ty + 2, tx + TOGGLE_SIZE - 2, ty + TOGGLE_SIZE - 2, Theme.SUCCESS)
-                        if (over) {
-                            val key = if (ticked) "tooltip.resourcepackprofiles.update_tick_on" else "tooltip.resourcepackprofiles.update_tick_off"
-                            context.setTooltipForNextFrame(t(key, pending.currentVersion, pending.newVersion), mouseX, mouseY)
-                        }
-                        rightEdge = lx - 6
-                    }
-                    if (missing) {
-                        val (text, color) = missingLabel()
-                        val lx = labelX(text)
-                        context.text(font, text, lx, centerY - 4, color, true)
-                        rightEdge = lx - 6
-                    } else if (builtIn) {
-                        rightEdge = drawBuiltIn(context, rowRight(), centerY) - 6
-                    }
-                }
+            val label = when {
+                missingFile -> missingLabel()
+                builtIn -> builtInLabel() to Theme.TEXT_MUTED
+                else -> null
             }
-
-            rightEdge = minOf(rightEdge, contentLeft() - 6)
-            if (rowHot || findable) {
-                val leftmostIcon = when {
-                    versioned -> versionsX()
-                    showCheck -> checkX()
-                    showRemove -> removeX()
-                    else -> null
-                }
-                if (leftmostIcon != null) rightEdge = minOf(rightEdge, leftmostIcon - 6)
+            if (label != null) {
+                val lx = labelX(label.first)
+                context.text(font, label.first, lx, centerY - 4, label.second, true)
+                rightEdge = lx - 6
             }
+            return rightEdge
+        }
 
-            // Outdated packs are shown like vanilla does it: the name is coloured, nothing is added
-            // to the row, and hovering the name gives Minecraft's own explanation. (A warning icon
-            // was tried; with most packs flagged it only made the lists busier.)
-            val outdated = compat != null && !missing
-            if (outdated && !disabled) nameColor = Theme.WARNING
-            val name = ScreenUtils.truncate(font, packName(packId), rightEdge - cursor)
-            context.text(font, name, cursor, centerY - 4, nameColor, true)
-            if (compat != null && outdated && hovered && mouseX >= cursor && mouseX < cursor + font.width(name)) {
-                context.setTooltipForNextFrame(compat, mouseX, mouseY)
+        override fun leftmostHoverIcon(rowHot: Boolean, showCheck: Boolean, showRemove: Boolean): Int? =
+            if (versioned && (rowHot || findable)) versionsX() else super.leftmostHoverIcon(rowHot, showCheck, showRemove)
+
+        override fun removeTooltip(): Component? = if (many) t("tooltip.resourcepackprofiles.remove_picked") else null
+    }
+
+    /** An installed pack that can be added to the selected profile: click it (or press Enter) to add it. */
+    private inner class AddPackRow(packId: String) : PackRow(packId) {
+        override val clickPicks get() = false
+        override val checkable get() = false
+
+        override fun onClick(event: MouseButtonEvent): Boolean {
+            addPacks(targetsOf(packId))
+            return true
+        }
+
+        override fun keyPressed(event: KeyEvent): Boolean {
+            if (!event.isConfirmation && !event.isSelection) return false
+            addPacks(targetsOf(packId))
+            return true
+        }
+
+        override fun extractTrailing(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, rowHot: Boolean): Int {
+            val right = x + width - 4
+            Icon.PLUS.draw(context, right - Icon.PLUS.width, centerY - Icon.PLUS.height / 2, if (hovered) Theme.TEXT else Theme.TEXT_MUTED)
+            return right - Icon.PLUS.width - 6
+        }
+    }
+
+    /**
+     * A pack in the All Packs view: how many profiles use it, a Download chip when a newer version
+     * is found but not downloaded yet, and x to move its file to the trash.
+     */
+    private inner class LibraryPackRow(packId: String) : PackRow(packId) {
+        /** Only pack files can be deleted; built-in and mod-provided packs have no file. */
+        override val removable get() = isPackFile(packId)
+
+        /** A newer version whose file isn't in the resourcepacks folder yet. */
+        private val downloadable: PackUpdate? get() = update?.takeIf { !isInstalled(it) }
+
+        /** How the pack is used, or null for an unused built-in pack (it can't be cleaned up anyway). */
+        private fun usageLabel(): Pair<Component, Int>? {
+            val uses = packUsage[packId] ?: 0
+            return when {
+                uses == 1 -> t("label.resourcepackprofiles.used_by_one") to Theme.TEXT_MUTED
+                uses > 1 -> t("label.resourcepackprofiles.used_by", uses) to Theme.TEXT_MUTED
+                packId in enabledNow -> t("label.resourcepackprofiles.enabled_now") to Theme.TEXT_MUTED
+                !isPackFile(packId) -> null
+                else -> t("label.resourcepackprofiles.unused") to Theme.ACTIVE
             }
         }
+
+        /** Left edge of the usage label, or the row's edge when there is none. */
+        private fun usageX(): Int = usageLabel()?.let { labelX(it.first) } ?: (rowRight() + 8)
+
+        // The usage label comes last and the Download chip sits to its left.
+        private fun downloadWord(): Component = t("button.resourcepackprofiles.download")
+        private fun downloadRight() = usageX() - 8
+        private fun downloadX() = downloadRight() - font.width(downloadWord()) - 9
+        private fun overDownload(mx: Double) = mx >= downloadX() - 1 && mx < downloadRight() + 1
+
+        /** Updates of the picked packs (or just this one) whose files aren't downloaded yet. */
+        private fun downloadTargets() =
+            targetsOf(packId).mapNotNull { (checks[it] as? PackCheck.UpdateAvailable)?.update }.filter { !isInstalled(it) }
+
+        override fun contentLeft(): Int = if (downloadable != null) downloadX() else usageX()
+
+        override fun onClick(event: MouseButtonEvent): Boolean {
+            val mx = event.x()
+            when {
+                removable && overRemove(mx) -> trashFromRow(targetsOf(packId).filter { isPackFile(it) })
+                downloadable != null && overDownload(mx) -> jobs.downloadOnly(downloadTargets())
+                else -> selectRow(this)
+            }
+            return true
+        }
+
+        override fun keyPressed(event: KeyEvent): Boolean {
+            val key = event.key()
+            if (!removable || (key != InputConstants.KEY_DELETE && key != InputConstants.KEY_BACKSPACE)) return false
+            trashFromRow(targetsOf(packId).filter { isPackFile(it) })
+            return true
+        }
+
+        override fun extractTrailing(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, rowHot: Boolean): Int {
+            var rightEdge = x + width - 4
+            usageLabel()?.let { (usage, usageColor) ->
+                val ux = labelX(usage)
+                context.text(font, usage, ux, centerY - 4, usageColor, true)
+                rightEdge = ux - 6
+            }
+            // Once the newer file is downloaded the row shows nothing extra: the chip going away is
+            // the signal, and profiles pick the file up when they are updated.
+            val pending = downloadable ?: return rightEdge
+            val dx = downloadX()
+            val dr = downloadRight()
+            val chipY = centerY - CHIP_HEIGHT / 2
+            val over = hovered && overDownload(mouseX.toDouble())
+            context.fill(dx, chipY, dr, chipY + CHIP_HEIGHT, Theme.withAlpha(Theme.SUCCESS, if (over) 0.38f else 0.22f))
+            context.text(font, downloadWord(), dx + 5, chipY + 2, Theme.SUCCESS, true)
+            if (over) {
+                val tip =
+                    if (many) t("tooltip.resourcepackprofiles.download_picked")
+                    else t("tooltip.resourcepackprofiles.download_update", pending.currentVersion, pending.newVersion)
+                context.setTooltipForNextFrame(tip, mouseX, mouseY)
+            }
+            return dx - 6
+        }
+
+        override fun removeTooltip(): Component =
+            if (many) t("tooltip.resourcepackprofiles.trash_picked") else t("tooltip.resourcepackprofiles.trash_pack")
     }
 
     private companion object {
