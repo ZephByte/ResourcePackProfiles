@@ -93,7 +93,9 @@ class ProfileScreen @JvmOverloads constructor(
         /** An installed pack that can be added to the selected profile. */
         ADD,
         /** An installed pack in the "All packs" view. */
-        LIBRARY
+        LIBRARY,
+        /** Not a pack: the heading above the built-in packs in the All packs and add lists. */
+        SECTION
     }
 
     private val logger = LoggerFactory.getLogger("ResourcePackProfiles")
@@ -505,20 +507,24 @@ class ProfileScreen @JvmOverloads constructor(
         val rows = when {
             libraryMode -> {
                 val query = packFilter.trim().lowercase()
-                userPacks()
-                    .filter { query.isEmpty() || packName(it.id).lowercase().contains(query) }
-                    .sortedWith(libraryComparator().thenBy { packName(it.id).lowercase() })
-                    .map { PackRow(it.id, RowMode.LIBRARY) }
+                sectioned(
+                    userPacks()
+                        .filter { query.isEmpty() || packName(it.id).lowercase().contains(query) }
+                        .sortedWith(libraryComparator().thenBy { packName(it.id).lowercase() }),
+                    RowMode.LIBRARY
+                )
             }
             profile == null -> emptyList()
             addMode -> {
                 val inProfile = profile.packIds.toSet()
                 val query = packFilter.trim().lowercase()
-                minecraft.resourcePackRepository.availablePacks
-                    .filter { it.packSource.shouldAddAutomatically() && !it.isRequired && it.id !in inProfile }
-                    .filter { query.isEmpty() || packName(it.id).lowercase().contains(query) }
-                    .sortedBy { packName(it.id).lowercase() }
-                    .map { PackRow(it.id, RowMode.ADD) }
+                sectioned(
+                    minecraft.resourcePackRepository.availablePacks
+                        .filter { it.packSource.shouldAddAutomatically() && !it.isRequired && it.id !in inProfile }
+                        .filter { query.isEmpty() || packName(it.id).lowercase().contains(query) }
+                        .sortedBy { packName(it.id).lowercase() },
+                    RowMode.ADD
+                )
             }
             else -> displayIds().map { PackRow(it, RowMode.PROFILE) }
         }
@@ -566,7 +572,7 @@ class ProfileScreen @JvmOverloads constructor(
 
     /** Ctrl+click toggles [row]; Shift+click picks the range from the anchor (Ctrl+Shift adds it). */
     private fun pickRow(row: PackRow, range: Boolean, toggle: Boolean) {
-        val ids = packList.children().map { it.packId }
+        val ids = packList.children().filter { it.mode != RowMode.SECTION }.map { it.packId }
         val anchor = pickAnchor?.takeIf { it in ids }
         when {
             range && anchor != null -> {
@@ -586,6 +592,17 @@ class ProfileScreen @JvmOverloads constructor(
             }
         }
         selectRow(row, keepPicks = true)
+    }
+
+    /**
+     * Rows for [packs], keeping their order: pack files first, then the built-in packs (from the
+     * game or mods) in their own section, so the rows themselves don't need to say so.
+     */
+    private fun sectioned(packs: List<Pack>, mode: RowMode): List<PackRow> {
+        val (files, builtIns) = packs.partition { isPackFile(it.id) }
+        val rows = files.map { PackRow(it.id, mode) }
+        if (builtIns.isEmpty()) return rows
+        return rows + PackRow("", RowMode.SECTION) + builtIns.map { PackRow(it.id, mode) }
     }
 
     /** Shows/hides the detail widgets for the current selection and reloads their contents. */
@@ -1584,7 +1601,7 @@ class ProfileScreen @JvmOverloads constructor(
                 }
                 InputConstants.KEY_A -> if (!typing && packList.visible && packList.children().isNotEmpty()) {
                     pickedPacks.clear()
-                    pickedPacks.addAll(packList.children().map { it.packId })
+                    pickedPacks.addAll(packList.children().filter { it.mode != RowMode.SECTION }.map { it.packId })
                     return true
                 }
                 InputConstants.KEY_Z -> if (!typing) {
@@ -1794,7 +1811,7 @@ class ProfileScreen @JvmOverloads constructor(
 
         // The pack list runs to the bottom of the panel unless the footer has a button to show,
         // so there is no empty strip where a button would be.
-        val footerInUse = listOf(selectAllButton, updateAllButton, missingButton, trashButton, libraryDownloadButton).any { it.visible }
+        val footerInUse = listOf(selectAllButton, updateAllButton, missingButton, trashButton, libraryDownloadButton, addPickedButton).any { it.visible }
         val listHeight = (if (footerInUse) footerY - 4 else panelBottom) - packTop
         if (packList.getHeight() != listHeight || packList.getY() != packTop) {
             packList.updateSizeAndPosition(rightW - 2, listHeight, rightX + 1, packTop)
@@ -2178,6 +2195,10 @@ class ProfileScreen @JvmOverloads constructor(
             super.setSelected(entry)
             if (rowClicking || entry == null) return
             pickedPacks.clear()
+            if (entry.mode == RowMode.SECTION) {
+                pickAnchor = null
+                return
+            }
             if (entry.mode != RowMode.ADD) pickedPacks.add(entry.packId)
             pickAnchor = entry.packId
         }
@@ -2195,7 +2216,8 @@ class ProfileScreen @JvmOverloads constructor(
      */
     private inner class PackRow(val packId: String, val mode: RowMode) : ObjectSelectionList.Entry<PackRow>() {
 
-        override fun getNarration(): Component = Component.literal(packName(packId))
+        override fun getNarration(): Component =
+            if (mode == RowMode.SECTION) t("label.resourcepackprofiles.built_in_section") else Component.literal(packName(packId))
 
         private val index get() = packList.children().indexOf(this)
         private val update get() = if (mode == RowMode.ADD) null else (checks[packId] as? PackCheck.UpdateAvailable)?.update
@@ -2214,10 +2236,11 @@ class ProfileScreen @JvmOverloads constructor(
                 RowMode.PROFILE -> when {
                     versioned && pending != null -> updateTextX(pending)
                     packId !in packsById -> labelX(missingLabel().first)
+                    builtIn -> labelX(builtInLabel())
                     else -> rowRight() + 8
                 }
-                RowMode.LIBRARY -> if (pending != null && !isInstalled(pending)) downloadX() else labelX(usageLabel().first)
-                RowMode.ADD -> rowRight() + 8
+                RowMode.LIBRARY -> if (pending != null && !isInstalled(pending)) downloadX() else usageX()
+                RowMode.ADD, RowMode.SECTION -> rowRight() + 8
             }
         }
         private fun removeX() = contentLeft() - 10 - Icon.CLOSE.width
@@ -2229,6 +2252,21 @@ class ProfileScreen @JvmOverloads constructor(
         private fun overCheck(mx: Double) = mx >= checkX() - 4 && mx < removeX() - 5
         private fun overVersions(mx: Double) =
             mx >= versionsX() - 4 && mx < (if (checkable) checkX() - 4 else removeX() - 5)
+
+        /**
+         * A pack that comes with the game or a mod instead of from a file in the resourcepacks
+         * folder. It has no updates and can't be deleted, so its row is labelled to say why.
+         */
+        private val builtIn get() = !isPackFile(packId) && packId in packsById
+        private fun builtInLabel(): Component = t("label.resourcepackprofiles.built_in")
+
+        /** Draws the "Built-in" label right-aligned at [right] and returns its left edge. */
+        private fun drawBuiltIn(context: GuiGraphicsExtractor, right: Int, centerY: Int): Int {
+            val label = builtInLabel()
+            val lx = right - font.width(label)
+            context.text(font, label, lx, centerY - 4, Theme.TEXT_MUTED, true)
+            return lx
+        }
 
         /** Only pack files can be deleted; built-in and mod-provided packs have no file. */
         private val deletable get() = mode == RowMode.LIBRARY && isPackFile(packId)
@@ -2278,20 +2316,24 @@ class ProfileScreen @JvmOverloads constructor(
             return t("tooltip.resourcepackprofiles.check_$key")
         }
 
-        private fun usageLabel(): Pair<Component, Int> {
+        /** How the pack is used, or null for an unused built-in pack (it can't be cleaned up anyway). */
+        private fun usageLabel(): Pair<Component, Int>? {
             val uses = packUsage[packId] ?: 0
             return when {
                 uses == 1 -> t("label.resourcepackprofiles.used_by_one") to Theme.TEXT_MUTED
                 uses > 1 -> t("label.resourcepackprofiles.used_by", uses) to Theme.TEXT_MUTED
                 packId in enabledNow -> t("label.resourcepackprofiles.enabled_now") to Theme.TEXT_MUTED
-                !isPackFile(packId) -> t("label.resourcepackprofiles.built_in") to Theme.TEXT_MUTED
+                !isPackFile(packId) -> null
                 else -> t("label.resourcepackprofiles.unused") to Theme.ACTIVE
             }
         }
 
+        /** Left edge of the usage label, or the row's edge when there is none. */
+        private fun usageX(): Int = usageLabel()?.let { labelX(it.first) } ?: (rowRight() + 8)
+
         // In the library the usage label comes first and the download button sits to its left.
         private fun downloadWord(): Component = t("button.resourcepackprofiles.download")
-        private fun downloadRight() = labelX(usageLabel().first) - 8
+        private fun downloadRight() = usageX() - 8
         private fun downloadX() = downloadRight() - font.width(downloadWord()) - 9
 
         /** Picked packs (or just this one) that can be checked on Modrinth. */
@@ -2302,7 +2344,7 @@ class ProfileScreen @JvmOverloads constructor(
             targetsOf(packId).mapNotNull { (checks[it] as? PackCheck.UpdateAvailable)?.update }.filter { !isInstalled(it) }
 
         override fun mouseClicked(event: MouseButtonEvent, doubled: Boolean): Boolean {
-            if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) return false
+            if (event.button() != InputConstants.MOUSE_BUTTON_LEFT || mode == RowMode.SECTION) return false
             // The row decides what the click does to the picks, so the list must not reset them.
             rowClicking = true
             val mx = event.x()
@@ -2371,6 +2413,7 @@ class ProfileScreen @JvmOverloads constructor(
             val key = event.key()
             val isDelete = key == InputConstants.KEY_DELETE || key == InputConstants.KEY_BACKSPACE
             when (mode) {
+                RowMode.SECTION -> return false
                 RowMode.ADD -> {
                     if (event.isConfirmation || event.isSelection) {
                         addPacks(targetsOf(packId))
@@ -2405,6 +2448,16 @@ class ProfileScreen @JvmOverloads constructor(
         }
 
         override fun extractContent(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, delta: Float) {
+            if (mode == RowMode.SECTION) {
+                // A small heading with a rule after it, sitting low in the row so it reads as the
+                // start of the rows below rather than one of them.
+                val label = t("label.resourcepackprofiles.built_in_section")
+                val ty = y + height - 11
+                context.text(font, label, x + 6, ty, Theme.TEXT_MUTED, true)
+                val ruleX = x + 6 + font.width(label) + 6
+                context.fill(ruleX, ty + 4, x + width - 8, ty + 5, Theme.DIVIDER)
+                return
+            }
             val inProfile = mode == RowMode.PROFILE
             val dragging = inProfile && dragMoved && dragIndex == index
             val isSelected = mode != RowMode.ADD && packList.selected === this
@@ -2440,8 +2493,8 @@ class ProfileScreen @JvmOverloads constructor(
                 }
                 if (overToggle) {
                     val tip = when {
-                        many && disabled -> t("tooltip.resourcepackprofiles.enable_picked", pickedPacks.size)
-                        many -> t("tooltip.resourcepackprofiles.disable_picked", pickedPacks.size)
+                        many && disabled -> t("tooltip.resourcepackprofiles.enable_picked")
+                        many -> t("tooltip.resourcepackprofiles.disable_picked")
                         disabled -> t("tooltip.resourcepackprofiles.enable_pack")
                         else -> t("tooltip.resourcepackprofiles.disable_pack")
                     }
@@ -2475,9 +2528,9 @@ class ProfileScreen @JvmOverloads constructor(
                 Icon.CLOSE.draw(context, removeX(), centerY - Icon.CLOSE.height / 2, if (hotRemove) Theme.DANGER else Theme.TEXT_SECONDARY)
                 if (hotRemove) {
                     val tip = when {
-                        inProfile && many -> t("tooltip.resourcepackprofiles.remove_picked", pickedPacks.size)
+                        inProfile && many -> t("tooltip.resourcepackprofiles.remove_picked")
                         inProfile -> null
-                        many -> t("tooltip.resourcepackprofiles.trash_picked", targetsOf(packId).count { isPackFile(it) })
+                        many -> t("tooltip.resourcepackprofiles.trash_picked")
                         else -> t("tooltip.resourcepackprofiles.trash_pack")
                     }
                     if (tip != null) context.setTooltipForNextFrame(tip, mouseX, mouseY)
@@ -2487,7 +2540,7 @@ class ProfileScreen @JvmOverloads constructor(
                 Icon.REFRESH.draw(context, checkX(), centerY - Icon.REFRESH.height / 2, if (hotCheck) Theme.TEXT else Theme.TEXT_SECONDARY)
                 if (hotCheck) {
                     val tip =
-                        if (many) t("tooltip.resourcepackprofiles.check_picked", checkTargets().size)
+                        if (many) t("tooltip.resourcepackprofiles.check_picked")
                         else checkResult() ?: t("tooltip.resourcepackprofiles.check_pack")
                     context.setTooltipForNextFrame(tip, mouseX, mouseY)
                 }
@@ -2501,10 +2554,11 @@ class ProfileScreen @JvmOverloads constructor(
                     rightEdge -= Icon.PLUS.width + 6
                 }
                 RowMode.LIBRARY -> {
-                    val (usage, usageColor) = usageLabel()
-                    val ux = labelX(usage)
-                    context.text(font, usage, ux, centerY - 4, usageColor, true)
-                    rightEdge = ux - 6
+                    usageLabel()?.let { (usage, usageColor) ->
+                        val ux = labelX(usage)
+                        context.text(font, usage, ux, centerY - 4, usageColor, true)
+                        rightEdge = ux - 6
+                    }
 
                     if (pending != null) {
                         // Once the newer file is downloaded the row shows nothing extra: the Download
@@ -2517,7 +2571,7 @@ class ProfileScreen @JvmOverloads constructor(
                             context.text(font, downloadWord(), dx + 5, chipY + 2, Theme.SUCCESS, true)
                             if (over) {
                                 val tip =
-                                    if (many) t("tooltip.resourcepackprofiles.download_picked", downloadTargets().size)
+                                    if (many) t("tooltip.resourcepackprofiles.download_picked")
                                     else t("tooltip.resourcepackprofiles.download_update", pending.currentVersion, pending.newVersion)
                                 context.setTooltipForNextFrame(tip, mouseX, mouseY)
                             }
@@ -2564,6 +2618,8 @@ class ProfileScreen @JvmOverloads constructor(
                         val lx = labelX(text)
                         context.text(font, text, lx, centerY - 4, color, true)
                         rightEdge = lx - 6
+                    } else if (builtIn) {
+                        rightEdge = drawBuiltIn(context, rowRight(), centerY) - 6
                     }
                 }
             }

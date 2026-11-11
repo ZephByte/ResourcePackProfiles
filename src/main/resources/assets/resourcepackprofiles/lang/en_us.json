@@ -240,15 +240,16 @@
   "status.resourcepackprofiles.packs_disabled": "Switched off %s packs",
   "status.resourcepackprofiles.packs_enabled": "Switched on %s packs",
   "button.resourcepackprofiles.add_picked": "Add %s Selected",
-  "tooltip.resourcepackprofiles.remove_picked": "Remove the %s selected packs",
-  "tooltip.resourcepackprofiles.trash_picked": "Move the %s selected packs to the trash",
-  "tooltip.resourcepackprofiles.disable_picked": "Switch the %s selected packs off",
-  "tooltip.resourcepackprofiles.enable_picked": "Switch the %s selected packs back on",
-  "tooltip.resourcepackprofiles.check_picked": "Check the %s selected packs for updates",
-  "tooltip.resourcepackprofiles.download_picked": "Download updates for the %s selected packs",
+  "tooltip.resourcepackprofiles.remove_picked": "Remove the selected packs",
+  "tooltip.resourcepackprofiles.trash_picked": "Move the selected packs to the trash",
+  "tooltip.resourcepackprofiles.disable_picked": "Switch the selected packs off",
+  "tooltip.resourcepackprofiles.enable_picked": "Switch the selected packs back on",
+  "tooltip.resourcepackprofiles.check_picked": "Check the selected packs for updates",
+  "tooltip.resourcepackprofiles.download_picked": "Download updates for the selected packs",
   "screen.resourcepackprofiles.trash_picked.title": "Move packs to the trash?",
   "screen.resourcepackprofiles.trash_picked.message": "The %s packs listed below will be moved to the trash, and you can undo this.",
   "shortcut.resourcepackprofiles.pick_pack": "Select several packs",
   "shortcut.resourcepackprofiles.pick_range": "Select a range of packs",
-  "shortcut.resourcepackprofiles.pick_all": "Select every pack in the list"
+  "shortcut.resourcepackprofiles.pick_all": "Select every pack in the list",
+  "label.resourcepackprofiles.built_in_section": "Built-in"
 }
