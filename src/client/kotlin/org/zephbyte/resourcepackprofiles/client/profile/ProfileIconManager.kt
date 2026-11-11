@@ -114,13 +114,6 @@ object ProfileIconManager {
     fun cleanup() = textures.cleanup()
 
     /**
-     * Builds an auto-composite icon from the given packs, ignoring any custom icon. Used for
-     * previews; the caller owns the returned image. Returns null if no pack icons are available.
-     */
-    fun buildCompositeImage(packIds: List<String>): NativeImage? =
-        generateCompositeIcon(ResourcePackProfile("", packIds))
-
-    /**
      * Reads any image Java can decode (PNG, JPEG, GIF, BMP) as a square icon. Minecraft's own
      * loader, NativeImage.read, only accepts PNG: it checks the PNG signature first and throws
      * on anything else. ImageIO works even though the game runs headless.

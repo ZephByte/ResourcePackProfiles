@@ -1,8 +1,6 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
 import com.mojang.blaze3d.platform.InputConstants
-import net.minecraft.ChatFormatting
-import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.components.EditBox
 import net.minecraft.client.gui.components.ObjectSelectionList
@@ -14,7 +12,6 @@ import net.minecraft.network.chat.CommonComponents
 import net.minecraft.network.chat.Component
 import net.minecraft.resources.Identifier
 import net.minecraft.server.packs.repository.Pack
-import net.minecraft.server.packs.repository.PackCompatibility
 import org.slf4j.LoggerFactory
 import org.zephbyte.resourcepackprofiles.client.RefreshablePackScreen
 import org.zephbyte.resourcepackprofiles.client.profile.AutoApply
@@ -25,14 +22,19 @@ import org.zephbyte.resourcepackprofiles.client.profile.PackTrash
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileIconManager
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
 import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
+import org.zephbyte.resourcepackprofiles.client.ui.DragReorder
 import org.zephbyte.resourcepackprofiles.client.ui.FlatButton
 import org.zephbyte.resourcepackprofiles.client.ui.FlatSelectionList
 import org.zephbyte.resourcepackprofiles.client.ui.StatusPill
 import org.zephbyte.resourcepackprofiles.client.ui.Icon
+import org.zephbyte.resourcepackprofiles.client.ui.MenuItem
+import org.zephbyte.resourcepackprofiles.client.ui.MultiSelection
+import org.zephbyte.resourcepackprofiles.client.ui.PopupMenu
 import org.zephbyte.resourcepackprofiles.client.ui.Theme
 import org.zephbyte.resourcepackprofiles.client.update.DownloadOutcome
 import org.zephbyte.resourcepackprofiles.client.update.DownloadProgress
 import org.zephbyte.resourcepackprofiles.client.update.PackCheck
+import org.zephbyte.resourcepackprofiles.client.update.PackSession
 import org.zephbyte.resourcepackprofiles.client.update.PackUpdate
 import org.zephbyte.resourcepackprofiles.client.update.ProjectHit
 import org.zephbyte.resourcepackprofiles.client.update.UpdateChecker
@@ -40,12 +42,11 @@ import org.zephbyte.resourcepackprofiles.client.update.VersionChoice
 import org.zephbyte.resourcepackprofiles.client.util.DynamicTextureCache
 import org.zephbyte.resourcepackprofiles.client.util.FileDialogs
 import org.zephbyte.resourcepackprofiles.client.util.ScreenUtils
-import org.zephbyte.resourcepackprofiles.client.util.activeScreen
+import org.zephbyte.resourcepackprofiles.client.util.runInBackground
 import org.zephbyte.resourcepackprofiles.client.util.setGuiScreen
 import org.zephbyte.resourcepackprofiles.client.util.showScreen
+import org.zephbyte.resourcepackprofiles.client.util.t
 import java.nio.file.Path
-import kotlin.math.abs
-import kotlin.math.exp
 
 /**
  * The mod's single screen: profiles on the left, the selected profile's packs and actions on the
@@ -63,18 +64,6 @@ class ProfileScreen @JvmOverloads constructor(
     private val replacesVanilla: Boolean = false
 ) : Screen(Component.translatable("screen.resourcepackprofiles.title")) {
 
-    private class MenuItem(
-        val label: Component,
-        val danger: Boolean = false,
-        /** Small right-aligned annotation, e.g. "current" in the version list. */
-        val note: Component? = null,
-        val muted: Boolean = false,
-        /** Disabled items are shown but do nothing and keep the menu open. */
-        val enabled: Boolean = true,
-        val action: () -> Unit
-    )
-
-    /** What a row of the right-hand list represents. */
     /** How the "All Packs" list is ordered. Ties are always broken by name. */
     private enum class LibrarySort(val id: String) {
         /** Packs with an update available first. */
@@ -88,6 +77,7 @@ class ProfileScreen @JvmOverloads constructor(
         NAME("name")
     }
 
+    /** What a row of the right-hand list represents. */
     private enum class RowMode {
         /** A pack in the selected profile's load order. */
         PROFILE,
@@ -116,7 +106,7 @@ class ProfileScreen @JvmOverloads constructor(
     private var profileApplied = false
 
     /** Latest Modrinth result per pack id; shared by every profile that contains the pack. */
-    private val checks = SESSION_CHECKS
+    private val checks = PackSession.checks
     /** Non-null while a background check or download runs; shown in place of the status line. */
     private var busy: Component? = null
     /** Per-file state of the running download batch, if any; drives the progress bar. */
@@ -127,49 +117,36 @@ class ProfileScreen @JvmOverloads constructor(
     private var statusUntil = 0L
     private var undo: (() -> Unit)? = null
 
-    // Drag-to-reorder: the display-order ids being rearranged, committed on mouse release.
-    private var dragIds: MutableList<String>? = null
-    private var dragIndex = -1
-    private var dragStartY = 0.0
-    private var dragMoved = false
-    /** Latest pointer height while dragging; the lifted rows follow it. */
-    private var dragMouseY = 0.0
-    /** Distance from the top of the lifted rows to where the pointer grabbed them. */
-    private var dragGrabOffset = 0.0
-    /**
-     * Rows making way for a drag, or settling after a drop, are drawn this many pixels from their
-     * slot (by pack id). The offsets shrink to zero every frame, so rows slide instead of jumping.
-     */
-    private val rowShift = mutableMapOf<String, Float>()
-    private var lastFrameNanos = System.nanoTime()
+    /** Drag-to-reorder of the profile's packs; the new order is saved when the mouse is released. */
+    private val drag = DragReorder(PACK_ROW_HEIGHT, object : DragReorder.View {
+        override val top get() = packList.y
+        override val bottom get() = packList.y + packList.height
+        override fun rowTops() = packList.children().map { it.y }
+        override fun showOrder() = rebuildPackList()
+        override fun scrollBy(amount: Double): Boolean {
+            val before = packList.scrollAmount()
+            packList.setScrollAmount(before + amount)
+            return packList.scrollAmount() != before
+        }
+    })
 
     /** Packs whose available update is ticked, i.e. included in "Update N Selected". None by default. */
     private val tickedUpdates = mutableSetOf<String>()
 
     /**
-     * Packs picked in the pack list, file-browser style: a click picks one row, Ctrl+click adds or
-     * removes a row, Shift+click picks the range from [pickAnchor]. An action on a row that is one
-     * of several picked applies to all of them.
+     * Packs picked in the pack list, file-browser style. An action on a row that is one of
+     * several picked applies to all of them.
      */
-    private val pickedPacks = linkedSetOf<String>()
-    /** Where a Shift+click range starts: the row last clicked without Shift. */
-    private var pickAnchor: String? = null
+    private val picks = MultiSelection()
     /** Set while a pack row handles a click, so the list's select-on-focus leaves the picks alone. */
     private var rowClicking = false
     /** A picked row pressed without modifiers: the picks narrow to it on release, unless dragged. */
     private var collapseTo: String? = null
-    /** The picked packs being dragged together, in list order. */
-    private var dragGroup: List<String> = emptyList()
     /** Whether the first-run question was already shown by this screen. */
     private var firstRunShown = false
 
-    private var menu: List<MenuItem>? = null
-    private var menuX = 0
-    private var menuY = 0
-    private var menuWidth = 0
-    private var menuScroll = 0
-    /** Pack id whose version list the open menu shows, so a late result can't fill another menu. */
-    private var menuOwner: String? = null
+    /** The one popup (sort, overflow, shortcuts, or a pack's version list) that can be open. */
+    private val menu = PopupMenu()
 
     // Recomputed once per frame and shared by every row.
     private var packsById: Map<String, Pack> = emptyMap()
@@ -267,7 +244,6 @@ class ProfileScreen @JvmOverloads constructor(
     /** Width of the filter field: up to "Done" in add mode, up to the sort button in All Packs. */
     private val filterW get() = (if (libraryMode) sortButton.x - 4 else browseAddButton.x - 8) - filterX
 
-    private fun t(key: String, vararg args: Any): Component = Component.translatable(key, *args)
 
     /** The profile shown on the right, or null when none is selected or "All packs" is open. */
     private val selected: ResourcePackProfile?
@@ -443,7 +419,7 @@ class ProfileScreen @JvmOverloads constructor(
         selectedName = name
         addMode = false
         packFilter = ""
-        menu = null
+        menu.close()
         clearPicks()
         rebuildProfileList()
         syncDetail(forceName = true)
@@ -469,7 +445,7 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     /** Pack ids of the selected profile in display order (top = highest priority). */
-    private fun displayIds(): List<String> = dragIds ?: selected?.packIds?.reversed() ?: emptyList()
+    private fun displayIds(): List<String> = drag.order ?: selected?.packIds?.reversed() ?: emptyList()
 
     /** Orders packs by the chosen [librarySort]; false sorts before true, so "first" groups lead. */
     private fun libraryComparator(): Comparator<Pack> = when (librarySort) {
@@ -484,8 +460,8 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     private fun toggleSortMenu() {
-        if (menu != null) {
-            menu = null
+        if (menu.isOpen) {
+            menu.close()
             return
         }
         val items = LibrarySort.entries.map { sort ->
@@ -541,37 +517,32 @@ class ProfileScreen @JvmOverloads constructor(
         }
         packList.replaceEntries(rows)
         packList.setScrollAmount(scroll)
-        val shown = rows.mapTo(HashSet()) { it.packId }
-        pickedPacks.retainAll(shown)
-        if (pickAnchor !in shown) pickAnchor = null
+        picks.retain(rows.mapTo(HashSet()) { it.packId })
     }
 
     // --- Picking several packs ---
 
     private fun clearPicks() {
-        pickedPacks.clear()
-        pickAnchor = null
+        picks.clear()
         collapseTo = null
     }
 
-    /** The picked packs in list order. */
-    private fun pickedInOrder(): List<String> = packList.children().map { it.packId }.filter { it in pickedPacks }
+    /** Ids of the pack rows shown, in list order (section headings left out). */
+    private fun shownPackIds(): List<String> = packList.children().filter { it.mode != RowMode.SECTION }.map { it.packId }
 
-    /** Whether [packId] is one of several picked packs, so its row's actions apply to all of them. */
-    private fun inMultiPick(packId: String) = pickedPacks.size > 1 && packId in pickedPacks
+    /** The picked packs in list order. */
+    private fun pickedInOrder(): List<String> = picks.inOrder(shownPackIds())
 
     /** The packs an action on [packId]'s row applies to: all picked packs if it is picked, else just it. */
     private fun targetsOf(packId: String): List<String> =
-        if (packId in pickedPacks) pickedInOrder() else listOf(packId)
+        if (packId in picks) pickedInOrder() else listOf(packId)
+
+    /** Picks just [row]. Add mode only picks on purpose (Ctrl/Shift), since a plain click adds the pack. */
+    private fun pickOnly(row: PackRow) = picks.only(row.packId, pick = row.mode != RowMode.ADD)
 
     /** Moves the list's cursor to [row]. Unless [keepPicks], the picks become just that row. */
     private fun selectRow(row: PackRow, keepPicks: Boolean = false) {
-        if (!keepPicks) {
-            pickedPacks.clear()
-            // Add mode picks only on purpose (Ctrl/Shift), since a plain click adds the pack.
-            if (row.mode != RowMode.ADD) pickedPacks.add(row.packId)
-            pickAnchor = row.packId
-        }
+        if (!keepPicks) pickOnly(row)
         val was = rowClicking
         rowClicking = true
         try {
@@ -583,24 +554,10 @@ class ProfileScreen @JvmOverloads constructor(
 
     /** Ctrl+click toggles [row]; Shift+click picks the range from the anchor (Ctrl+Shift adds it). */
     private fun pickRow(row: PackRow, range: Boolean, toggle: Boolean) {
-        val ids = packList.children().filter { it.mode != RowMode.SECTION }.map { it.packId }
-        val anchor = pickAnchor?.takeIf { it in ids }
         when {
-            range && anchor != null -> {
-                val a = ids.indexOf(anchor)
-                val b = ids.indexOf(row.packId)
-                if (!toggle) pickedPacks.clear()
-                pickedPacks.addAll(ids.subList(minOf(a, b), maxOf(a, b) + 1))
-            }
-            toggle -> {
-                if (!pickedPacks.remove(row.packId)) pickedPacks.add(row.packId)
-                pickAnchor = row.packId
-            }
-            else -> {
-                pickedPacks.clear()
-                pickedPacks.add(row.packId)
-                pickAnchor = row.packId
-            }
+            range && picks.extend(row.packId, shownPackIds(), add = toggle) -> {}
+            toggle -> picks.toggle(row.packId)
+            else -> picks.only(row.packId)
         }
         selectRow(row, keepPicks = true)
     }
@@ -788,26 +745,23 @@ class ProfileScreen @JvmOverloads constructor(
 
     private fun onExport() {
         val profile = selected ?: return
-        Thread {
-            val ok = ProfileManager.exportProfile(profile)
-            Minecraft.getInstance().execute {
-                if (ok) showStatus(t("status.resourcepackprofiles.exported", profile.name))
-            }
-        }.also { it.isDaemon = true }.start()
+        runInBackground("RPP-Export", { ProfileManager.exportProfile(profile) }) { result ->
+            if (result.getOrDefault(false)) showStatus(t("status.resourcepackprofiles.exported", profile.name))
+        }
     }
 
     /** Opens the Modrinth browser; installs can be added to the profile being viewed, if any. */
     private fun openBrowser() {
-        menu = null
+        menu.close()
         commitRename()
         minecraft.showScreen(BrowseScreen(this, selected?.name))
     }
 
     private fun onImport() {
-        Thread {
-            val path = ProfileManager.pickProfileToImport() ?: return@Thread
-            Minecraft.getInstance().execute { offerMissingPacks(importProfiles(listOf(Path.of(path)))) }
-        }.also { it.isDaemon = true }.start()
+        runInBackground("RPP-Import", { ProfileManager.pickProfileToImport() }) { result ->
+            val path = result.getOrNull() ?: return@runInBackground
+            offerMissingPacks(importProfiles(listOf(Path.of(path))))
+        }
     }
 
     /** Imports each profile file and returns the names of the profiles that were added. */
@@ -865,21 +819,16 @@ class ProfileScreen @JvmOverloads constructor(
 
     private fun onChangeIcon() {
         val name = selectedName ?: return
-        Thread {
-            val path = FileDialogs.openFile(
-                "Select Profile Icon",
-                arrayOf("*.png", "*.jpg", "*.jpeg"),
-                "Image Files (*.png, *.jpg)"
-            ) ?: return@Thread
-            Minecraft.getInstance().execute {
-                try {
-                    if (ProfileManager.hasProfile(name)) ProfileIconManager.importCustomIcon(name, Path.of(path))
-                } catch (e: Exception) {
-                    logger.error("Failed to set custom icon for '{}'", name, e)
-                    showError(t("status.resourcepackprofiles.icon_failed"))
-                }
+        val pick = { FileDialogs.openFile("Select Profile Icon", arrayOf("*.png", "*.jpg", "*.jpeg", "*.webp"), "Image Files (*.png, *.jpg, *.webp)") }
+        runInBackground("RPP-IconPicker", pick) { result ->
+            val path = result.getOrNull() ?: return@runInBackground
+            try {
+                if (ProfileManager.hasProfile(name)) ProfileIconManager.importCustomIcon(name, Path.of(path))
+            } catch (e: Exception) {
+                logger.error("Failed to set custom icon for '{}'", name, e)
+                showError(t("status.resourcepackprofiles.icon_failed"))
             }
-        }.also { it.isDaemon = true }.start()
+        }
     }
 
     private fun onRemoveIcon() {
@@ -1023,7 +972,7 @@ class ProfileScreen @JvmOverloads constructor(
         var moved = false
         for (i in order) {
             val j = i + delta
-            if (ids[i] in pickedPacks && j in ids.indices && ids[j] !in pickedPacks) {
+            if (ids[i] in picks && j in ids.indices && ids[j] !in picks) {
                 ids[j] = ids[i].also { ids[i] = ids[j] }
                 moved = true
             }
@@ -1105,44 +1054,37 @@ class ProfileScreen @JvmOverloads constructor(
     private fun checkPacks(ids: List<String>, single: Boolean = false, quiet: Boolean = false) {
         if (busy != null || ids.isEmpty()) return
         busy = t("status.resourcepackprofiles.checking")
-        Thread {
-            val result = try {
-                Result.success(UpdateChecker.check(ids))
-            } catch (e: Exception) {
-                logger.error("Update check failed", e)
-                Result.failure(e)
-            }
-            Minecraft.getInstance().execute {
-                busy = null
-                result.onSuccess { report ->
-                    checks.putAll(report.checks)
-                    ProfileManager.recordSources(report.identities, report.projects)
-                    if (libraryMode) rebuildPackList()
-                    if (single) {
-                        val name = packName(ids.first())
-                        when (report.checks[ids.first()]) {
-                            is PackCheck.UpdateAvailable -> showStatus(t("status.resourcepackprofiles.pack_update_found", name), Theme.SUCCESS)
-                            is PackCheck.UpToDate -> showStatus(t("status.resourcepackprofiles.pack_up_to_date", name), Theme.SUCCESS)
-                            is PackCheck.NoCompatibleVersion -> showStatus(t("status.resourcepackprofiles.pack_no_version", name))
-                            else -> showStatus(t("status.resourcepackprofiles.pack_not_on_modrinth", name))
-                        }
-                        return@onSuccess
+        runInBackground("RPP-UpdateCheck", { UpdateChecker.check(ids) }) { result ->
+            busy = null
+            result.onSuccess { report ->
+                checks.putAll(report.checks)
+                ProfileManager.recordSources(report.identities, report.projects)
+                if (libraryMode) rebuildPackList()
+                if (single) {
+                    val name = packName(ids.first())
+                    when (report.checks[ids.first()]) {
+                        is PackCheck.UpdateAvailable -> showStatus(t("status.resourcepackprofiles.pack_update_found", name), Theme.SUCCESS)
+                        is PackCheck.UpToDate -> showStatus(t("status.resourcepackprofiles.pack_up_to_date", name), Theme.SUCCESS)
+                        is PackCheck.NoCompatibleVersion -> showStatus(t("status.resourcepackprofiles.pack_no_version", name))
+                        else -> showStatus(t("status.resourcepackprofiles.pack_not_on_modrinth", name))
                     }
-                    val results = report.checks.values
-                    val found = results.count { it is PackCheck.UpdateAvailable }
-                    val current = results.count { it is PackCheck.UpToDate }
-                    val noVersion = results.count { it is PackCheck.NoCompatibleVersion }
-                    val unknown = results.count { it is PackCheck.NotOnModrinth || it is PackCheck.Unavailable }
-                    val summary =
-                        if (noVersion > 0) t("status.resourcepackprofiles.check_summary_no_version", found, current, unknown, noVersion)
-                        else t("status.resourcepackprofiles.check_summary", found, current, unknown)
-                    if (!quiet) showStatus(summary, if (found > 0) Theme.SUCCESS else Theme.TEXT_SECONDARY)
-                    else if (found > 0) showStatus(t("status.resourcepackprofiles.updates_available", found), Theme.SUCCESS)
-                }.onFailure {
-                    if (!quiet) showError(t("status.resourcepackprofiles.updates_failed"))
+                    return@onSuccess
                 }
+                val results = report.checks.values
+                val found = results.count { it is PackCheck.UpdateAvailable }
+                val current = results.count { it is PackCheck.UpToDate }
+                val noVersion = results.count { it is PackCheck.NoCompatibleVersion }
+                val unknown = results.count { it is PackCheck.NotOnModrinth || it is PackCheck.Unavailable }
+                val summary =
+                    if (noVersion > 0) t("status.resourcepackprofiles.check_summary_no_version", found, current, unknown, noVersion)
+                    else t("status.resourcepackprofiles.check_summary", found, current, unknown)
+                if (!quiet) showStatus(summary, if (found > 0) Theme.SUCCESS else Theme.TEXT_SECONDARY)
+                else if (found > 0) showStatus(t("status.resourcepackprofiles.updates_available", found), Theme.SUCCESS)
+            }.onFailure {
+                logger.error("Update check failed", it)
+                if (!quiet) showError(t("status.resourcepackprofiles.updates_failed"))
             }
-        }.also { it.name = "RPP-UpdateCheck"; it.isDaemon = true }.start()
+        }
     }
 
     /** Whether the file an update would download is already in the resourcepacks folder. */
@@ -1161,28 +1103,21 @@ class ProfileScreen @JvmOverloads constructor(
         val batch = DownloadProgress(updates)
         progress = batch
         busy = t("status.resourcepackprofiles.downloading", updates.size)
-        Thread {
-            val result = try {
-                Result.success(UpdateChecker.downloadAll(updates, batch))
-            } catch (e: Exception) {
-                logger.error("Failed to download pack updates", e)
-                Result.failure(e)
+        runInBackground("RPP-UpdateDownload", { UpdateChecker.downloadAll(updates, batch) }) { result ->
+            busy = null
+            progress = null
+            reloadPacks()
+            refreshPackCache()
+            rebuildPackList()
+            result.onSuccess { outcome ->
+                val done = outcome.replacements.size
+                if (outcome.failed.isEmpty()) showStatus(t("status.resourcepackprofiles.updates_downloaded", done), Theme.SUCCESS)
+                else showError(t("status.resourcepackprofiles.downloaded_partial", done, outcome.failed.size))
+            }.onFailure {
+                logger.error("Failed to download pack updates", it)
+                showError(t("status.resourcepackprofiles.download_failed"))
             }
-            Minecraft.getInstance().execute {
-                busy = null
-                progress = null
-                reloadPacks()
-                refreshPackCache()
-                rebuildPackList()
-                result.onSuccess { outcome ->
-                    val done = outcome.replacements.size
-                    if (outcome.failed.isEmpty()) showStatus(t("status.resourcepackprofiles.updates_downloaded", done), Theme.SUCCESS)
-                    else showError(t("status.resourcepackprofiles.downloaded_partial", done, outcome.failed.size))
-                }.onFailure {
-                    showError(t("status.resourcepackprofiles.download_failed"))
-                }
-            }
-        }.also { it.name = "RPP-UpdateDownload"; it.isDaemon = true }.start()
+        }
     }
 
     /**
@@ -1195,53 +1130,46 @@ class ProfileScreen @JvmOverloads constructor(
         val batch = DownloadProgress(updates)
         progress = batch
         busy = t("status.resourcepackprofiles.downloading", updates.size)
-        Thread {
-            val result = try {
-                Result.success(UpdateChecker.downloadAll(updates, batch))
-            } catch (e: Exception) {
-                logger.error("Failed to download pack updates", e)
-                Result.failure(e)
-            }
-            Minecraft.getInstance().execute {
-                busy = null
-                progress = null
-                result.onSuccess { outcome ->
-                    // Packs that downloaded are switched; any that failed are left as they were.
-                    val replacements = outcome.replacements
-                    if (replacements.isEmpty()) {
-                        showError(t("status.resourcepackprofiles.download_failed"))
-                        return@onSuccess
-                    }
-                    val before = ProfileManager.getProfile(profileName) ?: return@onSuccess
-                    val backupName = if (backup) ProfileManager.duplicateProfile(profileName, " (backup)") else null
-                    reloadPacks()
-                    val changed = replacements.filter { it.key != it.value }
-                    val done = updates.filter { it.packId in replacements }
-                    val newSources = done.associate { replacements.getValue(it.packId) to it.versionId }
-                    val newProjects = done.filter { it.projectId.isNotEmpty() }.associate { replacements.getValue(it.packId) to it.projectId }
-                    ProfileManager.replacePackIds(profileName, changed, newSources, newProjects, rememberPrevious = true, carrySources = false)
-                    undo = {
-                        ProfileManager.putProfile(before)
-                        backupName?.let { ProfileManager.deleteProfile(it) }
-                    }
-                    // The updated packs have new ids now, so their ticks are spent.
-                    tickedUpdates.removeAll(replacements.keys)
-                    refreshPackCache()
-                    rebuildProfileList()
-                    rebuildPackList()
-                    val only = updates.singleOrNull()
-                    when {
-                        outcome.failed.isNotEmpty() ->
-                            showError(t("status.resourcepackprofiles.packs_updated_partial", replacements.size, outcome.failed.size))
-                        only != null -> showStatus(t("status.resourcepackprofiles.pack_switched", only.projectTitle, only.newVersion), Theme.SUCCESS)
-                        backupName != null -> showStatus(t("status.resourcepackprofiles.packs_updated_backup", updates.size, backupName), Theme.SUCCESS)
-                        else -> showStatus(t("status.resourcepackprofiles.packs_updated", updates.size), Theme.SUCCESS)
-                    }
-                }.onFailure {
+        runInBackground("RPP-UpdateDownload", { UpdateChecker.downloadAll(updates, batch) }) { result ->
+            busy = null
+            progress = null
+            result.onSuccess { outcome ->
+                // Packs that downloaded are switched; any that failed are left as they were.
+                val replacements = outcome.replacements
+                if (replacements.isEmpty()) {
                     showError(t("status.resourcepackprofiles.download_failed"))
+                    return@onSuccess
                 }
+                val before = ProfileManager.getProfile(profileName) ?: return@onSuccess
+                val backupName = if (backup) ProfileManager.duplicateProfile(profileName, " (backup)") else null
+                reloadPacks()
+                val changed = replacements.filter { it.key != it.value }
+                val done = updates.filter { it.packId in replacements }
+                val newSources = done.associate { replacements.getValue(it.packId) to it.versionId }
+                val newProjects = done.filter { it.projectId.isNotEmpty() }.associate { replacements.getValue(it.packId) to it.projectId }
+                ProfileManager.replacePackIds(profileName, changed, newSources, newProjects, rememberPrevious = true, carrySources = false)
+                undo = {
+                    ProfileManager.putProfile(before)
+                    backupName?.let { ProfileManager.deleteProfile(it) }
+                }
+                // The updated packs have new ids now, so their ticks are spent.
+                tickedUpdates.removeAll(replacements.keys)
+                refreshPackCache()
+                rebuildProfileList()
+                rebuildPackList()
+                val only = updates.singleOrNull()
+                when {
+                    outcome.failed.isNotEmpty() ->
+                        showError(t("status.resourcepackprofiles.packs_updated_partial", replacements.size, outcome.failed.size))
+                    only != null -> showStatus(t("status.resourcepackprofiles.pack_switched", only.projectTitle, only.newVersion), Theme.SUCCESS)
+                    backupName != null -> showStatus(t("status.resourcepackprofiles.packs_updated_backup", updates.size, backupName), Theme.SUCCESS)
+                    else -> showStatus(t("status.resourcepackprofiles.packs_updated", updates.size), Theme.SUCCESS)
+                }
+            }.onFailure {
+                logger.error("Failed to download pack updates", it)
+                showError(t("status.resourcepackprofiles.download_failed"))
             }
-        }.also { it.name = "RPP-UpdateDownload"; it.isDaemon = true }.start()
+        }
     }
 
     /** Switches a pack back to the file it replaced in the selected profile. */
@@ -1254,17 +1182,17 @@ class ProfileScreen @JvmOverloads constructor(
         showStatus(t("status.resourcepackprofiles.pack_reverted", packName(previous)))
     }
 
-    /**
-     * Opens the version list for a pack, right-aligned at ([right], [top]). The list appears
-     * immediately with a loading line (and the switch-back entry, which needs no network) and is
-     * filled in when Modrinth answers.
-     */
     /** What the worker found when a version list was opened: versions, or possible matches to pick from. */
     private sealed interface VersionLookup {
         class Versions(val choices: List<VersionChoice>?) : VersionLookup
         class Matches(val hits: List<ProjectHit>) : VersionLookup
     }
 
+    /**
+     * Opens the version list for a pack, right-aligned at ([right], [top]). The list appears
+     * immediately with a loading line (and the switch-back entry, which needs no network) and is
+     * filled in when Modrinth answers.
+     */
     private fun openVersions(packId: String, right: Int, top: Int, pickedProject: String? = null) {
         val profile = selected ?: return
         val base = mutableListOf<MenuItem>()
@@ -1272,71 +1200,63 @@ class ProfileScreen @JvmOverloads constructor(
         if (previous != null && previous in packsById) {
             base.add(MenuItem(t("menu.resourcepackprofiles.revert_to", packName(previous))) { revertPack(packId, previous) })
         }
-        openMenuAt(base + MenuItem(t("menu.resourcepackprofiles.versions_loading"), muted = true, enabled = false) {}, right, top)
-        menuOwner = packId
+        openMenuAt(base + MenuItem(t("menu.resourcepackprofiles.versions_loading"), muted = true, enabled = false) {}, right, top, owner = packId)
 
         val missing = packId !in packsById
         // A project chosen from search results replaces whatever the profile remembers.
         val knownVersion = if (pickedProject != null) null else profile.packSources?.get(packId)
         val project = pickedProject ?: profile.packProjects?.get(packId)
-        Thread {
-            val result = try {
-                var lookup: VersionLookup = VersionLookup.Versions(UpdateChecker.listVersions(packId, knownVersion, project))
-                // A missing pack that can't be tied to a project (an older export, or a version that
-                // is gone and was never linked) is searched for by its name instead.
-                if (missing && pickedProject == null && (lookup as VersionLookup.Versions).choices == null) {
-                    lookup = VersionLookup.Matches(UpdateChecker.searchProjects(packId))
-                }
-                Result.success(lookup)
-            } catch (e: Exception) {
-                logger.error("Failed to list versions for {}", packId, e)
-                Result.failure(e)
-            }
-            Minecraft.getInstance().execute {
-                // The user may have closed this menu, or opened another, while we were waiting.
-                if (menu == null || menuOwner != packId) return@execute
-                val items = base.toMutableList()
-                val lookup = result.getOrNull()
-                when {
-                    lookup == null ->
-                        items.add(MenuItem(t("menu.resourcepackprofiles.versions_failed"), muted = true, enabled = false) {})
-                    lookup is VersionLookup.Matches -> {
-                        if (lookup.hits.isEmpty()) {
-                            items.add(MenuItem(t("menu.resourcepackprofiles.no_matches"), muted = true, enabled = false) {})
-                        } else {
-                            items.add(MenuItem(t("menu.resourcepackprofiles.search_results", UpdateChecker.guessName(packId)), muted = true, enabled = false) {})
-                            for (hit in lookup.hits) {
-                                items.add(MenuItem(Component.literal(hit.title)) { openVersions(packId, right, top, hit.projectId) })
-                            }
+        val lookUp = {
+            val versions = VersionLookup.Versions(UpdateChecker.listVersions(packId, knownVersion, project))
+            // A missing pack that can't be tied to a project (an older export, or a version that
+            // is gone and was never linked) is searched for by its name instead.
+            if (missing && pickedProject == null && versions.choices == null) VersionLookup.Matches(UpdateChecker.searchProjects(packId))
+            else versions
+        }
+        runInBackground("RPP-Versions", lookUp) { result ->
+            result.exceptionOrNull()?.let { logger.error("Failed to list versions for {}", packId, it) }
+            // The user may have closed this menu, or opened another, while we were waiting.
+            if (!menu.isOpen || menu.owner != packId) return@runInBackground
+            val items = base.toMutableList()
+            val lookup = result.getOrNull()
+            when {
+                lookup == null ->
+                    items.add(MenuItem(t("menu.resourcepackprofiles.versions_failed"), muted = true, enabled = false) {})
+                lookup is VersionLookup.Matches -> {
+                    if (lookup.hits.isEmpty()) {
+                        items.add(MenuItem(t("menu.resourcepackprofiles.no_matches"), muted = true, enabled = false) {})
+                    } else {
+                        items.add(MenuItem(t("menu.resourcepackprofiles.search_results", UpdateChecker.guessName(packId)), muted = true, enabled = false) {})
+                        for (hit in lookup.hits) {
+                            items.add(MenuItem(Component.literal(hit.title)) { openVersions(packId, right, top, hit.projectId) })
                         }
                     }
-                    lookup is VersionLookup.Versions && lookup.choices == null ->
-                        items.add(MenuItem(t("menu.resourcepackprofiles.versions_unknown"), muted = true, enabled = false) {})
-                    lookup is VersionLookup.Versions -> for (choice in lookup.choices.orEmpty()) {
-                        val noteKey = when {
-                            choice.current -> "label.resourcepackprofiles.version_current"
-                            isInstalled(choice.update) -> "label.resourcepackprofiles.version_installed"
-                            !choice.compatible -> "label.resourcepackprofiles.version_other_game"
-                            else -> null
-                        }
-                        items.add(MenuItem(
-                            Component.literal(choice.update.newVersion),
-                            note = noteKey?.let { t(it) },
-                            muted = choice.current || !choice.compatible,
-                            enabled = !choice.current
-                        ) { selectedName?.let { applyUpdates(it, listOf(choice.update)) } })
-                    }
                 }
-                openMenuAt(items, right, top)
-                menuOwner = packId
+                lookup is VersionLookup.Versions && lookup.choices == null ->
+                    items.add(MenuItem(t("menu.resourcepackprofiles.versions_unknown"), muted = true, enabled = false) {})
+                lookup is VersionLookup.Versions -> for (choice in lookup.choices.orEmpty()) {
+                    val noteKey = when {
+                        choice.current -> "label.resourcepackprofiles.version_current"
+                        isInstalled(choice.update) -> "label.resourcepackprofiles.version_installed"
+                        !choice.compatible -> "label.resourcepackprofiles.version_other_game"
+                        else -> null
+                    }
+                    items.add(MenuItem(
+                        Component.literal(choice.update.newVersion),
+                        note = noteKey?.let { t(it) },
+                        muted = choice.current || !choice.compatible,
+                        enabled = !choice.current
+                    ) { selectedName?.let { applyUpdates(it, listOf(choice.update)) } })
+                }
             }
-        }.also { it.name = "RPP-Versions"; it.isDaemon = true }.start()
+            openMenuAt(items, right, top, owner = packId)
+        }
     }
 
-    /** Downloads the selected profile's missing packs that Modrinth still has. */
     /** What a missing-pack download found: how it went, and which versions Modrinth no longer has. */
     private class MissingOutcome(val outcome: DownloadOutcome, val gone: Set<String>)
 
+    /** Downloads the missing packs of [profileNames] (the selected profile by default) that Modrinth still has. */
     private fun downloadMissing(profileNames: List<String> = listOfNotNull(selected?.name)) {
         // Pack id -> Modrinth version id, across every profile asked about.
         val sources = profileNames.mapNotNull { ProfileManager.getProfile(it) }
@@ -1345,50 +1265,46 @@ class ProfileScreen @JvmOverloads constructor(
         if (busy != null || sources.isEmpty()) return
         iconsShown.clear()
         busy = t("status.resourcepackprofiles.downloading_missing", sources.size)
-        Thread {
-            val result = try {
-                // The progress bar needs file names and sizes, so it starts once versions are resolved.
-                val found = UpdateChecker.resolveMissing(sources)
-                val batch = DownloadProgress(found)
-                progress = batch
-                val outcome = UpdateChecker.downloadAll(found, batch)
-                Result.success(MissingOutcome(outcome, sources.keys - found.map { it.packId }.toSet()))
-            } catch (e: Exception) {
-                logger.error("Failed to download missing packs", e)
-                Result.failure(e)
-            }
-            Minecraft.getInstance().execute {
-                busy = null
-                progress = null
-                result.onSuccess { r ->
-                    reloadPacks()
-                    // A file saved under a different name gets a different pack id.
-                    val renamed = r.outcome.replacements.filter { it.key != it.value }
-                    profileNames.forEach { name ->
-                        if (renamed.isNotEmpty()) ProfileManager.replacePackIds(name, renamed)
-                        // Versions Modrinth no longer has can never be downloaded: forget them, so
-                        // "Download N Missing" stops counting them. The project is kept, which is
-                        // what lets another version be picked from the pack's row.
-                        if (r.gone.isNotEmpty()) ProfileManager.dropSources(name, r.gone)
-                    }
-                    refreshPackCache()
-                    rebuildPackList()
-                    val downloaded = r.outcome.replacements.size
-                    val problems = r.gone.size + r.outcome.failed.size
-                    if (problems == 0) showStatus(t("status.resourcepackprofiles.missing_downloaded", downloaded), Theme.SUCCESS)
-                    else showError(t("status.resourcepackprofiles.missing_partial", downloaded, problems))
-                }.onFailure {
-                    showError(t("status.resourcepackprofiles.download_failed"))
+        val download = {
+            // The progress bar needs file names and sizes, so it starts once versions are resolved.
+            val found = UpdateChecker.resolveMissing(sources)
+            val batch = DownloadProgress(found)
+            progress = batch
+            val outcome = UpdateChecker.downloadAll(found, batch)
+            MissingOutcome(outcome, sources.keys - found.map { it.packId }.toSet())
+        }
+        runInBackground("RPP-MissingDownload", download) { result ->
+            busy = null
+            progress = null
+            result.onSuccess { r ->
+                reloadPacks()
+                // A file saved under a different name gets a different pack id.
+                val renamed = r.outcome.replacements.filter { it.key != it.value }
+                profileNames.forEach { name ->
+                    if (renamed.isNotEmpty()) ProfileManager.replacePackIds(name, renamed)
+                    // Versions Modrinth no longer has can never be downloaded: forget them, so
+                    // "Download N Missing" stops counting them. The project is kept, which is
+                    // what lets another version be picked from the pack's row.
+                    if (r.gone.isNotEmpty()) ProfileManager.dropSources(name, r.gone)
                 }
+                refreshPackCache()
+                rebuildPackList()
+                val downloaded = r.outcome.replacements.size
+                val problems = r.gone.size + r.outcome.failed.size
+                if (problems == 0) showStatus(t("status.resourcepackprofiles.missing_downloaded", downloaded), Theme.SUCCESS)
+                else showError(t("status.resourcepackprofiles.missing_partial", downloaded, problems))
+            }.onFailure {
+                logger.error("Failed to download missing packs", it)
+                showError(t("status.resourcepackprofiles.download_failed"))
             }
-        }.also { it.name = "RPP-MissingDownload"; it.isDaemon = true }.start()
+        }
     }
 
     // --- Overflow menu ---
 
     private fun toggleMenu() {
-        if (menu != null) {
-            menu = null
+        if (menu.isOpen) {
+            menu.close()
             return
         }
         val profile = selected ?: return
@@ -1422,8 +1338,8 @@ class ProfileScreen @JvmOverloads constructor(
 
     /** Lists every keyboard and mouse shortcut. The entries are information, not actions. */
     private fun toggleHelpMenu() {
-        if (menu != null) {
-            menu = null
+        if (menu.isOpen) {
+            menu.close()
             return
         }
         val items = SHORTCUTS.map { (keys, action) ->
@@ -1433,7 +1349,7 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     private fun openSettings() {
-        menu = null
+        menu.close()
         commitRename()
         val vanilla = parent
         val openVanilla: (() -> Unit)? = if (vanilla is RefreshablePackScreen) ({ openVanillaScreen(vanilla) }) else null
@@ -1441,26 +1357,11 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     /** Shows [items] as a popup below [anchor], right-aligned to it. */
-    private fun openMenu(items: List<MenuItem>, anchor: FlatButton) =
-        openMenuAt(items, anchor.x + anchor.getWidth(), anchor.y + anchor.getHeight() + 2)
+    private fun openMenu(items: List<MenuItem>, anchor: FlatButton) = menu.openBelow(font, items, anchor, height, pad)
 
     /** Shows [items] as a popup whose top-right corner is at ([right], [top]), kept on screen. */
-    private fun openMenuAt(items: List<MenuItem>, right: Int, top: Int) {
-        menu = items
-        menuOwner = null
-        menuScroll = 0
-        menuWidth = items.maxOf { font.width(it.label) + (it.note?.let { note -> font.width(note) + 12 } ?: 0) } + 16
-        if (items.size > MENU_MAX_VISIBLE) menuWidth += 4
-        menuX = (right - menuWidth).coerceAtLeast(pad)
-        menuY = top.coerceAtMost(height - 4 - menuHeight(items)).coerceAtLeast(4)
-    }
-
-    private fun isOverMenu(mouseX: Int, mouseY: Int): Boolean {
-        val items = menu ?: return false
-        return mouseX >= menuX && mouseX < menuX + menuWidth && mouseY >= menuY && mouseY < menuY + menuHeight(items)
-    }
-
-    private fun menuHeight(items: List<MenuItem>) = minOf(items.size, MENU_MAX_VISIBLE) * MENU_ITEM_HEIGHT + 4
+    private fun openMenuAt(items: List<MenuItem>, right: Int, top: Int, owner: String? = null) =
+        menu.open(font, items, right, top, height, pad, owner)
 
     /** Switches to the vanilla resource pack screen, bypassing replacement this once. */
     private fun openVanillaScreen(vanilla: RefreshablePackScreen) {
@@ -1472,34 +1373,15 @@ class ProfileScreen @JvmOverloads constructor(
         minecraft.showScreen(vanilla.rpp_createRefreshedScreen())
     }
 
-    private fun menuItemAt(mx: Double, my: Double): MenuItem? {
-        val items = menu ?: return null
-        if (mx < menuX || mx >= menuX + menuWidth) return null
-        val row = ((my - menuY - 2) / MENU_ITEM_HEIGHT).toInt()
-        if (my < menuY + 2 || row >= MENU_MAX_VISIBLE) return null
-        return items.getOrNull(row + menuScroll)
-    }
-
-    override fun mouseScrolled(mouseX: Double, mouseY: Double, scrollX: Double, scrollY: Double): Boolean {
-        val items = menu ?: return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY)
-        // An open menu captures the wheel, so the list behind it doesn't scroll away.
-        val maxScroll = (items.size - MENU_MAX_VISIBLE).coerceAtLeast(0)
-        menuScroll = (menuScroll - scrollY.toInt().coerceIn(-3, 3)).coerceIn(0, maxScroll)
-        return true
-    }
+    // An open menu captures the wheel, so the list behind it doesn't scroll away.
+    override fun mouseScrolled(mouseX: Double, mouseY: Double, scrollX: Double, scrollY: Double): Boolean =
+        menu.scroll(scrollY) || super.mouseScrolled(mouseX, mouseY, scrollX, scrollY)
 
     // --- Input ---
 
     override fun mouseClicked(event: MouseButtonEvent, doubled: Boolean): Boolean {
-        if (menu != null) {
-            // An open menu captures the click: run the item under the cursor, or just dismiss.
-            val item = menuItemAt(event.x(), event.y())
-            if (item != null && !item.enabled) return true
-            menu = null
-            menuOwner = null
-            item?.action?.invoke()
-            return true
-        }
+        // An open menu captures the click: it runs the item under the cursor, or just closes.
+        if (menu.click(event.x(), event.y())) return true
         // Clicking the large profile icon is a shortcut for "Change icon".
         if (selected != null && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             val ix = rightX + 8
@@ -1517,101 +1399,18 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     override fun mouseDragged(event: MouseButtonEvent, dx: Double, dy: Double): Boolean {
-        dragIds ?: return super.mouseDragged(event, dx, dy)
-        dragMouseY = event.y()
-        if (!dragMoved && abs(dragMouseY - dragStartY) < 3) return true
-        dragMoved = true
-        updateDragTarget()
+        if (!drag.isActive) return super.mouseDragged(event, dx, dy)
+        drag.drag(event.y())
         return true
-    }
-
-    /** The packs being dragged, in list order: the picked ones, or just the pressed one. */
-    private fun liftedIds(): List<String> {
-        val ids = dragIds ?: return emptyList()
-        return dragGroup.ifEmpty { listOfNotNull(ids.getOrNull(dragIndex)) }
-    }
-
-    /**
-     * Top of the lifted rows. They follow the pointer up and down but stay on the list's rails:
-     * never sideways, and never past the list's top or bottom.
-     */
-    private fun floatTop(): Int {
-        val top = packList.y
-        val bottom = packList.y + packList.height - liftedIds().size * PACK_ROW_HEIGHT
-        return (dragMouseY - dragGrabOffset).toInt().coerceIn(top, maxOf(top, bottom))
-    }
-
-    /**
-     * Moves the dragged packs to the slot under the middle of the lifted pressed row. Other picked
-     * packs gather around it in list order. Rows that have to make way slide aside.
-     */
-    private fun updateDragTarget() {
-        val ids = dragIds ?: return
-        val rows = packList.children()
-        if (rows.isEmpty() || dragIndex !in ids.indices) return
-        val lead = ids[dragIndex]
-        val group = liftedIds()
-        val probe = floatTop() + group.indexOf(lead) * PACK_ROW_HEIGHT + PACK_ROW_HEIGHT / 2
-        var target = dragIndex
-        when {
-            probe < rows.first().y -> target = 0
-            probe >= rows.last().y + rows.last().height -> target = rows.lastIndex
-            else -> rows.forEachIndexed { i, row -> if (probe >= row.y && probe < row.y + row.height) target = i }
-        }
-        val rest = ids.filter { it !in group }
-        val start = (target - group.indexOf(lead)).coerceIn(0, rest.size)
-        val reordered = rest.subList(0, start) + group + rest.subList(start, rest.size)
-        if (reordered != ids) {
-            val before = ids.withIndex().associate { it.value to it.index }
-            ids.clear()
-            ids.addAll(reordered)
-            reordered.forEachIndexed { i, id ->
-                val was = before[id] ?: i
-                if (was != i && id !in group) rowShift[id] = (rowShift[id] ?: 0f) + (was - i) * PACK_ROW_HEIGHT
-            }
-            rebuildPackList()
-        }
-        dragIndex = ids.indexOf(lead)
-    }
-
-    /** Per frame while dragging: scrolls the list when the pointer nears its top or bottom edge. */
-    private fun autoScrollDrag() {
-        if (dragIds == null || !dragMoved) return
-        val edge = 16.0
-        val top = packList.y.toDouble()
-        val bottom = (packList.y + packList.height).toDouble()
-        val step = when {
-            dragMouseY < top + edge -> -(1 + (top + edge - dragMouseY) / edge * 5)
-            dragMouseY > bottom - edge -> 1 + (dragMouseY - (bottom - edge)) / edge * 5
-            else -> return
-        }
-        val before = packList.scrollAmount()
-        packList.setScrollAmount(before + step)
-        if (packList.scrollAmount() != before) updateDragTarget()
-    }
-
-    /** Lets the offsets of sliding rows shrink towards their slots. */
-    private fun settleRows() {
-        val now = System.nanoTime()
-        val seconds = ((now - lastFrameNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
-        lastFrameNanos = now
-        if (rowShift.isEmpty()) return
-        val keep = exp(-seconds * SLIDE_RATE)
-        val it = rowShift.entries.iterator()
-        while (it.hasNext()) {
-            val entry = it.next()
-            entry.setValue(entry.value * keep)
-            if (abs(entry.value) < 0.5f) it.remove()
-        }
     }
 
     /** The dragged rows, popped out of the list and drawn over it where the pointer holds them. */
     private fun extractLiftedRows(context: GuiGraphicsExtractor) {
-        if (dragIds == null || !dragMoved) return
+        if (!drag.isLifting) return
         val rows = packList.children()
-        val lifted = liftedIds().mapNotNull { id -> rows.firstOrNull { it.packId == id } }
+        val lifted = drag.lifted().mapNotNull { id -> rows.firstOrNull { it.packId == id } }
         val first = lifted.firstOrNull() ?: return
-        val top = floatTop()
+        val top = drag.liftedTop()
         val left = first.x
         val right = first.x + first.width
         val bottom = top + lifted.size * PACK_ROW_HEIGHT
@@ -1632,29 +1431,14 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     override fun mouseReleased(event: MouseButtonEvent): Boolean {
-        val ids = dragIds ?: return super.mouseReleased(event)
-        val moved = dragMoved
-        val index = dragIndex
-        val group = dragGroup
+        if (!drag.isActive) return super.mouseReleased(event)
         val collapse = collapseTo
-        // Each lifted row starts from where it was dropped and glides into its slot.
-        if (moved) {
-            val top = floatTop()
-            liftedIds().forEachIndexed { i, id ->
-                packList.children().firstOrNull { it.packId == id }?.let { row ->
-                    rowShift[id] = (top + i * PACK_ROW_HEIGHT - row.y).toFloat()
-                }
-            }
-        }
-        dragIds = null
-        dragIndex = -1
-        dragMoved = false
-        dragGroup = emptyList()
         collapseTo = null
-        if (moved) {
-            commitPacks(ids.reversed(), t("status.resourcepackprofiles.reordered"))
+        val drop = drag.release()
+        if (drop != null) {
+            commitPacks(drop.order.reversed(), t("status.resourcepackprofiles.reordered"))
             rebuildPackList()
-            packList.children().getOrNull(index)?.let { selectRow(it, keepPicks = group.size > 1) }
+            packList.children().getOrNull(drop.leadIndex)?.let { selectRow(it, keepPicks = drop.group.size > 1) }
         } else if (collapse != null) {
             // A plain click on one of several picked packs, without dragging: pick just that one.
             packList.children().firstOrNull { it.packId == collapse }?.let { selectRow(it) }
@@ -1665,8 +1449,8 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     override fun keyPressed(event: KeyEvent): Boolean {
-        if (menu != null && event.isEscape) {
-            menu = null
+        if (menu.isOpen && event.isEscape) {
+            menu.close()
             return true
         }
         if (nameBox.isFocused) {
@@ -1681,7 +1465,7 @@ class ProfileScreen @JvmOverloads constructor(
                 return true
             }
         }
-        if (event.isEscape && (pickedPacks.size > 1 || (addMode && pickedPacks.isNotEmpty()))) {
+        if (event.isEscape && (picks.size > 1 || (addMode && !picks.isEmpty()))) {
             clearPicks()
             return true
         }
@@ -1703,8 +1487,7 @@ class ProfileScreen @JvmOverloads constructor(
                     return true
                 }
                 InputConstants.KEY_A -> if (!typing && packList.visible && packList.children().isNotEmpty()) {
-                    pickedPacks.clear()
-                    pickedPacks.addAll(packList.children().filter { it.mode != RowMode.SECTION }.map { it.packId })
+                    picks.setAll(shownPackIds())
                     return true
                 }
                 InputConstants.KEY_Z -> if (!typing) {
@@ -1821,8 +1604,7 @@ class ProfileScreen @JvmOverloads constructor(
     private fun updateFrameState() {
         refreshPackCache()
         showDownloadedIcons()
-        settleRows()
-        autoScrollDrag()
+        drag.frame()
         val profile = selected
 
         if (profile != null && !nameBox.isFocused && nameBox.value != profile.name) commitRename()
@@ -1869,9 +1651,9 @@ class ProfileScreen @JvmOverloads constructor(
                     else selectAllButton.x + selectAllButton.getWidth()
             }
 
-            addPickedButton.visible = addMode && pickedPacks.isNotEmpty()
+            addPickedButton.visible = addMode && !picks.isEmpty()
             if (addPickedButton.visible) {
-                val pickedLabel = t("button.resourcepackprofiles.add_picked", pickedPacks.size)
+                val pickedLabel = t("button.resourcepackprofiles.add_picked", picks.size)
                 addPickedButton.setMessage(pickedLabel)
                 addPickedButton.setWidth(font.width(pickedLabel) + 16)
             }
@@ -1957,7 +1739,7 @@ class ProfileScreen @JvmOverloads constructor(
         updateFrameState()
         // While the pointer is over an open menu, nothing underneath it may react: widgets and
         // rows get an off-screen position, so they draw no hover state and show no tooltips.
-        val blocked = isOverMenu(mouseX, mouseY)
+        val blocked = menu.isOver(mouseX, mouseY)
         val mx = if (blocked) -1 else mouseX
         val my = if (blocked) -1 else mouseY
         super.extractRenderState(context, mx, my, delta)
@@ -1984,7 +1766,7 @@ class ProfileScreen @JvmOverloads constructor(
 
         extractLiftedRows(context)
         extractBottomBar(context, mx, my)
-        extractMenu(context, mouseX, mouseY)
+        menu.draw(context, font, mouseX, mouseY)
     }
 
     private fun extractDetail(context: GuiGraphicsExtractor, profile: ResourcePackProfile, mouseX: Int, mouseY: Int) {
@@ -1993,7 +1775,7 @@ class ProfileScreen @JvmOverloads constructor(
         context.blit(RenderPipelines.GUI_TEXTURED, ProfileIconManager.getIconId(profile), iconX, iconY, 0f, 0f, HEADER_ICON, HEADER_ICON, HEADER_ICON, HEADER_ICON)
         // The icon is clickable (it opens the image picker), so say so on hover: dim it, outline
         // it and show a folder. Not while a menu is open, since the menu would take the click.
-        if (menu == null && mouseX >= iconX && mouseX < iconX + HEADER_ICON && mouseY >= iconY && mouseY < iconY + HEADER_ICON) {
+        if (!menu.isOpen && mouseX >= iconX && mouseX < iconX + HEADER_ICON && mouseY >= iconY && mouseY < iconY + HEADER_ICON) {
             context.fill(iconX, iconY, iconX + HEADER_ICON, iconY + HEADER_ICON, 0xA0000000.toInt())
             Theme.border(context, iconX, iconY, HEADER_ICON, HEADER_ICON, Theme.CONTROL_BORDER_FOCUS)
             Icon.FOLDER.drawCentered(context, iconX, iconY, HEADER_ICON, HEADER_ICON, Theme.TEXT)
@@ -2059,40 +1841,6 @@ class ProfileScreen @JvmOverloads constructor(
     private fun statusPill(context: GuiGraphicsExtractor, text: Component, color: Int, alpha: Float, right: Int, fraction: Float? = null): IntArray? =
         StatusPill.draw(context, font, text, color, alpha, pad, height - 24, right, fraction)
 
-    private fun extractMenu(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int) {
-        val items = menu ?: return
-        // A new stratum guarantees the menu draws above the widgets it overlaps.
-        context.nextStratum()
-        val menuHeight = menuHeight(items)
-        Theme.raised(context, menuX, menuY, menuWidth, menuHeight)
-
-        val scrollable = items.size > MENU_MAX_VISIBLE
-        val contentRight = menuX + menuWidth - (if (scrollable) 5 else 1)
-        val hovered = menuItemAt(mouseX.toDouble(), mouseY.toDouble())
-        val visible = items.drop(menuScroll).take(MENU_MAX_VISIBLE)
-        visible.forEachIndexed { i, item ->
-            val iy = menuY + 2 + i * MENU_ITEM_HEIGHT
-            if (item === hovered && item.enabled) context.fill(menuX + 1, iy, contentRight, iy + MENU_ITEM_HEIGHT, Theme.CONTROL_HOVER)
-            val color = when {
-                item.danger -> Theme.DANGER
-                item.muted -> Theme.TEXT_MUTED
-                else -> Theme.TEXT
-            }
-            context.text(font, item.label, menuX + 8, iy + 3, color, true)
-            item.note?.let { context.text(font, it, contentRight - 7 - font.width(it), iy + 3, Theme.TEXT_MUTED, true) }
-        }
-        if (scrollable) {
-            // Thin scroll indicator: track plus a thumb sized to the visible fraction.
-            val trackTop = menuY + 2
-            val trackHeight = menuHeight - 4
-            val thumbHeight = (trackHeight * MENU_MAX_VISIBLE / items.size).coerceAtLeast(6)
-            val maxScroll = items.size - MENU_MAX_VISIBLE
-            val thumbTop = trackTop + (trackHeight - thumbHeight) * menuScroll / maxScroll
-            context.fill(menuX + menuWidth - 4, trackTop, menuX + menuWidth - 2, trackTop + trackHeight, Theme.DIVIDER)
-            context.fill(menuX + menuWidth - 4, thumbTop, menuX + menuWidth - 2, thumbTop + thumbHeight, Theme.TEXT_SECONDARY)
-        }
-    }
-
     override fun tick() {
         super.tick()
         val setting = ProfileManager.autoCheckSetting()
@@ -2112,8 +1860,8 @@ class ProfileScreen @JvmOverloads constructor(
             }
             return
         }
-        if (setting && !sessionAutoChecked && busy == null) {
-            sessionAutoChecked = true
+        if (setting && !PackSession.autoChecked && busy == null) {
+            PackSession.autoChecked = true
             checkPacks(allCheckableIds(), quiet = true)
         }
     }
@@ -2179,7 +1927,7 @@ class ProfileScreen @JvmOverloads constructor(
             if (target != null) selectedName = target.name
             addMode = false
             packFilter = ""
-            menu = null
+            menu.close()
             clearPicks()
             // A rename rebuilt the rows, so [entry] is stale; reselect by name instead.
             if (renamed) rebuildProfileList() else super.setSelected(entry)
@@ -2300,13 +2048,7 @@ class ProfileScreen @JvmOverloads constructor(
         override fun setSelected(entry: PackRow?) {
             super.setSelected(entry)
             if (rowClicking || entry == null) return
-            pickedPacks.clear()
-            if (entry.mode == RowMode.SECTION) {
-                pickAnchor = null
-                return
-            }
-            if (entry.mode != RowMode.ADD) pickedPacks.add(entry.packId)
-            pickAnchor = entry.packId
+            if (entry.mode == RowMode.SECTION) picks.clear() else pickOnly(entry)
         }
     }
 
@@ -2499,7 +2241,7 @@ class ProfileScreen @JvmOverloads constructor(
             }
             // Pressing one of several picked packs keeps them all picked, so they can be dragged
             // together; releasing without dragging narrows the picks to this one.
-            val group = if (inMultiPick(packId)) pickedInOrder() else listOf(packId)
+            val group = if (picks.isOneOfMany(packId)) pickedInOrder() else listOf(packId)
             if (group.size > 1) {
                 collapseTo = packId
                 selectRow(this, keepPicks = true)
@@ -2507,13 +2249,7 @@ class ProfileScreen @JvmOverloads constructor(
                 selectRow(this)
             }
             // Arm a drag; it only becomes a reorder once the mouse actually moves.
-            dragIds = displayIds().toMutableList()
-            dragGroup = group
-            dragIndex = index
-            dragStartY = event.y()
-            dragMouseY = event.y()
-            dragGrabOffset = event.y() - y + group.indexOf(packId) * PACK_ROW_HEIGHT
-            dragMoved = false
+            drag.press(displayIds(), index, group, event.y(), y)
             return true
         }
 
@@ -2545,7 +2281,7 @@ class ProfileScreen @JvmOverloads constructor(
             // Shift+Up/Down reorders the focused pack, or all picked ones (plain Up/Down navigates)
             if (event.hasShiftDown() && (event.isUp || event.isDown)) {
                 val delta = if (event.isUp) -1 else 1
-                return if (inMultiPick(packId)) movePicked(delta, packId) else movePack(index, delta)
+                return if (picks.isOneOfMany(packId)) movePicked(delta, packId) else movePack(index, delta)
             }
             // Space or Enter switches the focused pack (or all picked ones) off and on.
             if (event.isSelection) {
@@ -2569,13 +2305,13 @@ class ProfileScreen @JvmOverloads constructor(
         }
 
         override fun extractContent(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, delta: Float) {
-            if (mode == RowMode.PROFILE && dragMoved && packId in liftedIds()) {
+            if (mode == RowMode.PROFILE && drag.isLifted(packId)) {
                 // The slot the lifted row will drop into.
                 context.fill(x, y, x + width, y + height, 0x30000000)
                 Theme.border(context, x, y, width, height, Theme.DIVIDER)
                 return
             }
-            val shift = rowShift[packId] ?: 0f
+            val shift = drag.shiftOf(packId)
             if (shift == 0f) {
                 extractRow(context, mouseX, mouseY, hovered)
                 return
@@ -2606,11 +2342,11 @@ class ProfileScreen @JvmOverloads constructor(
             val isSelected = mode != RowMode.ADD && packList.selected === this
             // The row whose version list is open counts as hovered, so it keeps its highlight and
             // hover icons while the pointer is over the list.
-            val menuAnchor = menu != null && menuOwner == packId
+            val menuAnchor = menu.isOpen && menu.owner == packId
             val rowHot = hovered || menuAnchor
             // Picks are only marked when they mean something: several of them, or any in add mode.
-            val picked = packId in pickedPacks && (pickedPacks.size > 1 || mode == RowMode.ADD)
-            val many = inMultiPick(packId)
+            val picked = packId in picks && (picks.size > 1 || mode == RowMode.ADD)
+            val many = picks.isOneOfMany(packId)
             when {
                 dragging || picked -> context.fill(x, y, x + width, y + height, Theme.ROW_SELECTED)
                 rowHot || isSelected -> context.fill(x, y, x + width, y + height, Theme.ROW_HOVER)
@@ -2793,7 +2529,6 @@ class ProfileScreen @JvmOverloads constructor(
 
     private companion object {
         const val STATUS_MILLIS = 6000L
-        const val MENU_ITEM_HEIGHT = 14
         /** Size of the profile icon in the header; the header's two rows are built around it. */
         const val HEADER_ICON = 40
         /** The name field hugs the name text: 8px glyphs plus a little room. */
@@ -2804,7 +2539,6 @@ class ProfileScreen @JvmOverloads constructor(
          */
         const val HEADER_GAP = 0
         const val NAME_FIELD_WIDTH = 180
-        const val MENU_MAX_VISIBLE = 12
 
         /** Keys -> translation key suffix, in the order shown by the "?" button. */
         val SHORTCUTS = listOf(
@@ -2825,14 +2559,9 @@ class ProfileScreen @JvmOverloads constructor(
         )
         const val CHIP_HEIGHT = 12
         const val PACK_ROW_HEIGHT = 22
-        /** How quickly sliding rows settle: larger is snappier. */
-        const val SLIDE_RATE = 18f
         /** Longest version label before it is cut off, so names keep some room. */
         const val UPDATE_LABEL_MAX = 90
 
-        // Shared by every open of the screen during one game session.
-        val SESSION_CHECKS = mutableMapOf<String, PackCheck>()
-        var sessionAutoChecked = false
         /** Kept for the session, so All Packs reopens in the order it was left in. */
         var librarySort = LibrarySort.UPDATES
         /** Width reserved for the versions hover icon, matching the other hover icons. */

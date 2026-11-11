@@ -1,7 +1,6 @@
 package org.zephbyte.resourcepackprofiles.client.screen
 
 import com.mojang.blaze3d.platform.InputConstants
-import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.components.EditBox
 import net.minecraft.client.gui.components.ObjectSelectionList
@@ -23,17 +22,19 @@ import org.zephbyte.resourcepackprofiles.client.ui.Theme
 import org.zephbyte.resourcepackprofiles.client.update.DownloadProgress
 import org.zephbyte.resourcepackprofiles.client.update.ModrinthApi
 import org.zephbyte.resourcepackprofiles.client.update.PackIdentity
+import org.zephbyte.resourcepackprofiles.client.update.PackSession
 import org.zephbyte.resourcepackprofiles.client.update.PackUpdate
 import org.zephbyte.resourcepackprofiles.client.update.ProjectHit
 import org.zephbyte.resourcepackprofiles.client.update.UpdateChecker
 import org.zephbyte.resourcepackprofiles.client.update.VersionChoice
 import org.zephbyte.resourcepackprofiles.client.util.RemoteImages
+import org.zephbyte.resourcepackprofiles.client.util.runInBackground
+import org.zephbyte.resourcepackprofiles.client.util.t
 import org.zephbyte.resourcepackprofiles.client.util.ScreenUtils
 import org.zephbyte.resourcepackprofiles.client.util.openInBrowser
 import org.zephbyte.resourcepackprofiles.client.util.showScreen
 import java.net.URI
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Browse and install resource packs from Modrinth: filters on the left, search results in the
@@ -121,7 +122,6 @@ class BrowseScreen(
     private val summaryY get() = detailHeaderBottom + 6
     private val versionsY get() = summaryY + SUMMARY_LINES * 10 + 6
 
-    private fun t(key: String, vararg args: Any): Component = Component.translatable(key, *args)
 
     override fun init() {
         openingChild = false
@@ -231,25 +231,19 @@ class BrowseScreen(
         val q = query.trim()
         val facets = facets()
         val index = SORTS[sortIndex]
-        Thread {
-            val page = try {
-                ModrinthApi.browse(q, facets, index, offset, PAGE_SIZE)
-            } catch (e: Exception) {
-                logger.warn("Modrinth search failed: {}", e.message)
-                null
+        runInBackground("RPP-Browse", { ModrinthApi.browse(q, facets, index, offset, PAGE_SIZE) }) { result ->
+            // A newer search has started since; its results win.
+            if (gen != generation) return@runInBackground
+            loading = false
+            val page = result.getOrElse {
+                logger.warn("Modrinth search failed: {}", it.message)
+                searchFailed = true
+                return@runInBackground
             }
-            Minecraft.getInstance().execute {
-                if (gen != generation) return@execute
-                loading = false
-                if (page == null) {
-                    searchFailed = true
-                    return@execute
-                }
-                results.addAll(page.hits)
-                totalHits = page.totalHits
-                rebuildResults()
-            }
-        }.also { it.name = "RPP-Browse"; it.isDaemon = true }.start()
+            results.addAll(page.hits)
+            totalHits = page.totalHits
+            rebuildResults()
+        }
     }
 
     override fun tick() {
@@ -272,25 +266,19 @@ class BrowseScreen(
         rebuildVersions()
         syncWidgets()
         val gen = ++detailGeneration
-        Thread {
-            val list = try {
-                UpdateChecker.projectVersions(hit.projectId, hit.title)
-            } catch (e: Exception) {
-                logger.warn("Could not load versions of {}: {}", hit.title, e.message)
-                null
+        runInBackground("RPP-BrowseVersions", { UpdateChecker.projectVersions(hit.projectId, hit.title) }) { result ->
+            // Another pack has been selected since.
+            if (gen != detailGeneration) return@runInBackground
+            result.onSuccess { list ->
+                versions = list
+                // Default to the newest version that works here.
+                chosen = list.firstOrNull { it.compatible } ?: list.firstOrNull()
+            }.onFailure {
+                logger.warn("Could not load versions of {}: {}", hit.title, it.message)
+                versionsFailed = true
             }
-            Minecraft.getInstance().execute {
-                if (gen != detailGeneration) return@execute
-                if (list == null) {
-                    versionsFailed = true
-                } else {
-                    versions = list
-                    // Default to the newest version that works here.
-                    chosen = list.firstOrNull { it.compatible } ?: list.firstOrNull()
-                }
-                rebuildVersions()
-            }
-        }.also { it.name = "RPP-BrowseVersions"; it.isDaemon = true }.start()
+            rebuildVersions()
+        }
     }
 
     private fun closeDetail() {
@@ -316,7 +304,7 @@ class BrowseScreen(
 
     private fun refreshInstalled() {
         installedIds = minecraft.resourcePackRepository.availablePacks.map { it.id }.toSet()
-        val known = IDENTIFIED.filterKeys { it in installedIds }
+        val known = PackSession.identified.filterKeys { it in installedIds }
         // A project counts as installed if one of its files is: identified by fingerprint, or
         // linked to it by a profile.
         installedProjects = known.values.map { it.projectId }.toSet() + ProfileManager.getProfiles()
@@ -330,24 +318,19 @@ class BrowseScreen(
      * for all of them; results are kept for the session.
      */
     private fun identifyInstalled() {
-        val unknown = installedIds.filter { it.startsWith("file/") && !IDENTIFIED.containsKey(it) && it !in UNIDENTIFIED }
+        val unknown = installedIds.filter { it.startsWith("file/") && it !in PackSession.identified && it !in PackSession.unidentified }
         if (unknown.isEmpty()) return
-        Thread {
-            val found = try {
-                UpdateChecker.identify(unknown)
-            } catch (e: Exception) {
-                logger.warn("Could not identify installed packs: {}", e.message)
-                null
+        runInBackground("RPP-Identify", { UpdateChecker.identify(unknown) }) { result ->
+            val found = result.getOrElse {
+                logger.warn("Could not identify installed packs: {}", it.message)
+                return@runInBackground
             }
-            Minecraft.getInstance().execute {
-                if (found == null) return@execute
-                IDENTIFIED.putAll(found)
-                UNIDENTIFIED.addAll(unknown.filter { it !in found })
-                // Profiles that use these packs learn their Modrinth links too.
-                ProfileManager.recordSources(found.mapValues { it.value.versionId }, found.mapValues { it.value.projectId })
-                refreshInstalled()
-            }
-        }.also { it.name = "RPP-Identify"; it.isDaemon = true }.start()
+            PackSession.identified.putAll(found)
+            PackSession.unidentified.addAll(unknown.filter { it !in found })
+            // Profiles that use these packs learn their Modrinth links too.
+            ProfileManager.recordSources(found.mapValues { it.value.versionId }, found.mapValues { it.value.projectId })
+            refreshInstalled()
+        }
     }
 
     /** The installed pack id of exactly this version, if it is installed. */
@@ -381,28 +364,21 @@ class BrowseScreen(
         val batch = DownloadProgress(listOf(update))
         progress = batch
         busy = t("status.resourcepackprofiles.downloading", 1)
-        Thread {
-            val result = try {
-                Result.success(UpdateChecker.downloadAll(listOf(update), batch))
-            } catch (e: Exception) {
-                logger.error("Failed to install {}", hit.title, e)
-                Result.failure(e)
+        runInBackground("RPP-BrowseInstall", { UpdateChecker.downloadAll(listOf(update), batch) }) { result ->
+            busy = null
+            progress = null
+            result.exceptionOrNull()?.let { logger.error("Failed to install {}", hit.title, it) }
+            val newId = result.getOrNull()?.replacements?.values?.firstOrNull()
+            if (newId == null) {
+                showError(t("status.resourcepackprofiles.download_failed"))
+                return@runInBackground
             }
-            Minecraft.getInstance().execute {
-                busy = null
-                progress = null
-                val newId = result.getOrNull()?.replacements?.values?.firstOrNull()
-                if (newId == null) {
-                    showError(t("status.resourcepackprofiles.download_failed"))
-                    return@execute
-                }
-                minecraft.resourcePackRepository.reload()
-                IDENTIFIED[newId] = PackIdentity(update.versionId, update.projectId)
-                refreshInstalled()
-                if (addToProfile) addToProfile(newId, update)
-                else showStatus(t("status.resourcepackprofiles.browse_installed", hit.title), Theme.SUCCESS)
-            }
-        }.also { it.name = "RPP-BrowseInstall"; it.isDaemon = true }.start()
+            minecraft.resourcePackRepository.reload()
+            PackSession.identified[newId] = PackIdentity(update.versionId, update.projectId)
+            refreshInstalled()
+            if (addToProfile) addToProfile(newId, update)
+            else showStatus(t("status.resourcepackprofiles.browse_installed", hit.title), Theme.SUCCESS)
+        }
     }
 
     /** Adds an installed pack to the top of the profile the browser was opened from. */
@@ -806,10 +782,5 @@ class BrowseScreen(
             "themed", "tweaks", "utility", "vanilla-like"
         )
         val UNKNOWN_PACK: Identifier = Identifier.withDefaultNamespace("textures/misc/unknown_pack.png")
-
-        // Installed pack files already looked up this session (by pack id), so reopening the
-        // browser doesn't fingerprint every pack again.
-        val IDENTIFIED = ConcurrentHashMap<String, PackIdentity>()
-        val UNIDENTIFIED: MutableSet<String> = ConcurrentHashMap.newKeySet()
     }
 }

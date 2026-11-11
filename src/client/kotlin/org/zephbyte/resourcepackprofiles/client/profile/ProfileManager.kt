@@ -306,11 +306,7 @@ object ProfileManager {
         ProfileIconManager.invalidate(profile.name)
     }
 
-    /** Turns a pack off (or back on) inside a profile without removing it from the order. */
-    fun setPackDisabled(name: String, packId: String, disabled: Boolean) =
-        setPacksDisabled(name, listOf(packId), disabled)
-
-    /** Turns several packs of a profile off (or back on) at once. */
+    /** Turns packs off (or back on) inside a profile without removing them from the order. */
     fun setPacksDisabled(name: String, packIds: Collection<String>, disabled: Boolean) {
         val profile = profiles[name] ?: return
         val current = profile.disabledPackIds.orEmpty()
