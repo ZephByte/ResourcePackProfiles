@@ -10,7 +10,7 @@ A client-side Fabric mod for managing resource packs. Save named load-order prof
 
 ---
 
-![Profile screen showing a list of saved profiles with pack counts and custom icons](https://raw.githubusercontent.com/ZephByte/ResourcePackProfiles/main/docs/screenshot.png)
+![Resource Pack Profiles screen: profiles on the left, and the selected profile's packs with update and version badges on the right](https://raw.githubusercontent.com/ZephByte/ResourcePackProfiles/main/docs/screenshot.png)
 
 ---
 
