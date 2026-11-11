@@ -6,7 +6,7 @@ import net.minecraft.network.chat.Component;
 
 /**
  * Icon button for the resource pack screen that opens the profiles UI. Instead of a text label
- * it renders a "stacked sheets" glyph (drawn with fills, mirroring ProfileScreen's import icon)
+ * it renders a "stacked sheets" glyph (drawn with fills, like the icons in the profile screen)
  * to represent saved pack load-order profiles.
  */
 public class ProfileButton extends Button {

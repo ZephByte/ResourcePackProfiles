@@ -5,9 +5,12 @@ import com.mojang.blaze3d.platform.NativeImage
 import net.minecraft.resources.Identifier
 import org.slf4j.LoggerFactory
 import org.zephbyte.resourcepackprofiles.client.util.DynamicTextureCache
+import org.zephbyte.resourcepackprofiles.client.util.ImageDecoding
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Base64
+import javax.imageio.ImageIO
 
 object ProfileIconManager {
     private val logger = LoggerFactory.getLogger("ResourcePackProfiles")
@@ -111,21 +114,39 @@ object ProfileIconManager {
     fun cleanup() = textures.cleanup()
 
     /**
-     * Builds an auto-composite icon from the given packs, ignoring any custom icon. Used for
-     * previews; the caller owns the returned image. Returns null if no pack icons are available.
+     * Reads any image Java can decode (PNG, JPEG, GIF, BMP) as a square icon. Minecraft's own
+     * loader, NativeImage.read, only accepts PNG: it checks the PNG signature first and throws
+     * on anything else. ImageIO works even though the game runs headless.
+     *
+     * Non-square images are centre-cropped rather than stretched. Pixels are sampled straight
+     * into the icon, so a large photo costs no more than a small one.
      */
-    fun buildCompositeImage(packIds: List<String>): NativeImage? =
-        generateCompositeIcon(ResourcePackProfile("", packIds))
+    private fun readAsIcon(sourcePath: Path): NativeImage {
+        ImageDecoding.ensureWebp()
+        val source = Files.newInputStream(sourcePath).use { ImageIO.read(it) }
+            ?: throw IOException("Unsupported image format: ${sourcePath.fileName}")
+        val side = minOf(source.width, source.height)
+        val offsetX = (source.width - side) / 2
+        val offsetY = (source.height - side) / 2
+        val icon = NativeImage(ICON_SIZE, ICON_SIZE, true)
+        for (x in 0 until ICON_SIZE) {
+            for (y in 0 until ICON_SIZE) {
+                // getRGB returns ARGB, which is what setPixel takes. Images without an alpha
+                // channel (every JPEG) report fully opaque pixels.
+                icon.setPixel(x, y, source.getRGB(offsetX + x * side / ICON_SIZE, offsetY + y * side / ICON_SIZE))
+            }
+        }
+        return icon
+    }
 
     fun importCustomIcon(profileName: String, sourcePath: Path) {
         Files.createDirectories(iconsDir)
         val fileName = "${sanitizeFileName(profileName)}.png"
         val destPath = iconsDir.resolve(fileName)
 
-        // Read, resize to 64x64, save as PNG. try/finally ensures the NativeImage is
+        // Decode, crop and resize to 64x64, save as PNG. try/finally ensures the NativeImage is
         // always closed even if writeToFile throws (e.g. disk full, permissions).
-        val image = Files.newInputStream(sourcePath).use { NativeImage.read(it) }
-        val resized = resizeToIcon(image)
+        val resized = readAsIcon(sourcePath)
         try {
             resized.writeToFile(destPath)
         } finally {

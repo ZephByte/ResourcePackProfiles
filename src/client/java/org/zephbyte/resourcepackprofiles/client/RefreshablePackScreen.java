@@ -14,4 +14,10 @@ import net.minecraft.client.gui.screens.Screen;
  */
 public interface RefreshablePackScreen {
     Screen rpp_createRefreshedScreen();
+
+    /**
+     * Releases what this screen holds open (its folder watcher) without saving its pack
+     * selection. Used when the profile screen replaced this screen and it will never be shown.
+     */
+    void rpp_discard();
 }

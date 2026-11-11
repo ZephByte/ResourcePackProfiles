@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+**Resource Pack Profiles** becomes a resource pack manager: a redesigned interface, pack updates, and tools to keep your pack folder tidy. For Minecraft 26.1, 26.2, and 26.3. Existing profiles and `.rpprofile` files keep working.
+
+### Changes
+- **Replaces the vanilla pack screen** - Options > Resource Packs now opens Resource Pack Profiles directly; turn this off under **Settings** to get the vanilla screen with a Profiles button instead
+- **New interface** - one screen with your profiles on the left and the selected profile's packs and actions on the right, replacing the separate list and edit screens
+- **Edit in place** - add, remove, and drag to reorder packs; changes save immediately, with an undo for the last one
+- **Multi-select** - Ctrl+click, Shift+click and Ctrl+A select several packs, and adding, removing, switching off, moving, checking, downloading and trashing then apply to all of them
+- **Switch packs off** - untick a pack to skip it in a profile while keeping its place in the load order
+- **All Packs view** - see every installed pack and how many profiles use it, and move unused packs to a trash folder (undoable until you empty the trash)
+- **Update checker** - packs are checked for newer versions on Modrinth once per game session (you are asked first, and can turn it off in Settings); tick the updates you want, or **Select All Updates**, then click **Update N Selected**. A refresh button checks again on demand
+- **Choose a version** - a pack's version list shows every version, so you can pick an older or newer one, or switch back to the one you had
+- **Safe updates** - updating switches the profile to the new file and keeps the old one, so other profiles are unaffected; updating several packs at once can save a backup copy of the profile first
+- **Download missing packs** - importing a profile offers to download the packs you don't have from Modrinth, with a progress bar and a hover list of what is downloading; the same button is on any profile with missing packs. If a pack's recorded version no longer exists, use the arrow on that pack to pick another version, or search Modrinth for it. Profiles remember each pack's Modrinth project, so this works for profiles shared with you too (as long as they were exported by this version or later)
+- **Browse Modrinth** - search and install resource packs from inside the game, with filters for category, resolution and game version; opened from a profile, a pack can be installed and added to it in one click
+- **Compatibility warnings** - packs made for an older or newer version of Minecraft are flagged
+- **More icon formats** - profile icons can be JPEG or WebP images as well as PNG
+- **Automatic switching (optional)** - while in a world or on a server, choose a profile to apply whenever you join it; off unless you set it up
+- **Search, drag and drop, shortcuts** - filter profiles by name or pack, drop `.rpprofile` or `.zip` files onto the screen, and use Enter, F2, Ctrl+F, Ctrl+D, Ctrl+U, and Ctrl+Z; the **?** button lists every shortcut
+
+Editing the active profile no longer reloads your packs on every change; click **Apply Changes** when you are done. Downloads only come from Modrinth and are checked against their published SHA-512. Packs that are not on Modrinth, and unzipped folder packs, are skipped by the update checker.
+
+### Requirements
+| Minecraft | Fabric Loader | Fabric API | Fabric Language Kotlin | Mod Menu *(optional)* |
+|---|---|---|---|---|
+| 26.3 | 0.19.5+ | 0.161.0+26.3 | 1.14.1+kotlin.2.4.20 | 21.0.0-beta.1 |
+| 26.2 | 0.19.3+ | 0.152.2+26.2 | 1.13.12+kotlin.2.4.0 | 20.0.0-beta.3 |
+| 26.1 - 26.1.2 | 0.19.3+ | 0.145.1+26.1 | 1.13.12+kotlin.2.4.0 | 18.0.0-beta.1 |
+
 ## Resource Pack Profiles - v1.0.0+26.3
 
 Minecraft 26.3 compatibility release of **Resource Pack Profiles**.

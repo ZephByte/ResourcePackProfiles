@@ -16,6 +16,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.zephbyte.resourcepackprofiles.client.ProfileButton;
 import org.zephbyte.resourcepackprofiles.client.RefreshablePackScreen;
+import org.zephbyte.resourcepackprofiles.client.profile.ModSettings;
 import org.zephbyte.resourcepackprofiles.client.screen.ProfileScreen;
 
 import java.nio.file.Path;
@@ -28,7 +29,10 @@ public abstract class PackScreenMixin extends Screen implements RefreshablePackS
     @Shadow @Final private PackSelectionModel model;
     @Shadow @Final private Path packDir;
 
+    @Shadow private void closeWatcher() { throw new AssertionError(); }
+
     @Unique private ProfileButton rpp_profilesButton;
+    @Unique private boolean rpp_replaceChecked;
 
     protected PackScreenMixin(Component title) {
         super(title);
@@ -38,14 +42,37 @@ public abstract class PackScreenMixin extends Screen implements RefreshablePackS
     private void addProfilesButton(CallbackInfo ci) {
         ProfileButton button = new ProfileButton(rpp_profilesButtonX(), this.doneButton.getY(), 20, 20,
                 Component.translatable("tooltip.resourcepackprofiles.profiles"),
-                //? if >=26.2 {
-                _ -> this.minecraft.setScreenAndShow(new ProfileScreen((PackSelectionScreen) (Object) this)));
-                //?} else {
-                /*_ -> this.minecraft.setScreen(new ProfileScreen((PackSelectionScreen) (Object) this)));
-                *///?}
+                _ -> rpp_openProfiles(false));
         button.setTooltip(Tooltip.create(Component.translatable("tooltip.resourcepackprofiles.profiles")));
         this.rpp_profilesButton = button;
         this.addRenderableWidget(button);
+
+        // Open the profile screen in place of this one, unless the user turned that off or asked
+        // for the vanilla screen. Only the resource pack screen is replaced, never the data pack
+        // one. Checked once per screen: setScreen assigns the new screen before running init, so
+        // switching screens from here is safe.
+        if (!this.rpp_replaceChecked) {
+            this.rpp_replaceChecked = true;
+            if (this.packDir.equals(this.minecraft.getResourcePackDirectory())
+                    && ModSettings.INSTANCE.consumeReplaceVanillaScreen()) {
+                rpp_openProfiles(true);
+            }
+        }
+    }
+
+    @Unique
+    private void rpp_openProfiles(boolean replacesVanilla) {
+        ProfileScreen screen = new ProfileScreen((PackSelectionScreen) (Object) this, replacesVanilla);
+        //? if >=26.2 {
+        this.minecraft.setScreenAndShow(screen);
+        //?} else {
+        /*this.minecraft.setScreen(screen);
+        *///?}
+    }
+
+    @Override
+    public void rpp_discard() {
+        this.closeWatcher();
     }
 
     /**
