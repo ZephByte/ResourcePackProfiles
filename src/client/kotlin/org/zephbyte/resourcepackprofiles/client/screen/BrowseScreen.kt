@@ -19,9 +19,7 @@ import org.zephbyte.resourcepackprofiles.client.ui.FlatSelectionList
 import org.zephbyte.resourcepackprofiles.client.ui.Icon
 import org.zephbyte.resourcepackprofiles.client.ui.StatusPill
 import org.zephbyte.resourcepackprofiles.client.ui.Theme
-import org.zephbyte.resourcepackprofiles.client.update.DownloadProgress
 import org.zephbyte.resourcepackprofiles.client.update.ModrinthApi
-import org.zephbyte.resourcepackprofiles.client.update.PackIdentity
 import org.zephbyte.resourcepackprofiles.client.update.PackSession
 import org.zephbyte.resourcepackprofiles.client.update.PackUpdate
 import org.zephbyte.resourcepackprofiles.client.update.ProjectHit
@@ -73,8 +71,15 @@ class BrowseScreen(
     private var detailGeneration = 0
 
     // --- Installing ---
-    private var busy: Component? = null
-    @Volatile private var progress: DownloadProgress? = null
+    private val jobs = PackJobs(object : PackJobs.Host {
+        override fun packName(packId: String) = packId.removePrefix("file/")
+        override fun reloadPacks() = minecraft.resourcePackRepository.reload()
+        override fun refresh() = refreshInstalled()
+        override fun showStatus(text: Component, color: Int) = this@BrowseScreen.showStatus(text, color)
+        override fun showError(text: Component) = this@BrowseScreen.showError(text)
+        // Nothing done here changes a profile in a way that needs undoing.
+        override fun setUndo(action: () -> Unit) {}
+    })
     private var status: Component? = null
     private var statusColor = Theme.TEXT_SECONDARY
     private var statusUntil = 0L
@@ -353,7 +358,7 @@ class BrowseScreen(
     private fun install(addToProfile: Boolean) {
         val choice = chosen ?: return
         val hit = selectedHit ?: return
-        if (busy != null) return
+        if (jobs.isBusy) return
         val update = choice.update
         val existing = installedId(update)
         if (existing != null) {
@@ -361,20 +366,7 @@ class BrowseScreen(
             else showStatus(t("status.resourcepackprofiles.browse_already", hit.title))
             return
         }
-        val batch = DownloadProgress(listOf(update))
-        progress = batch
-        busy = t("status.resourcepackprofiles.downloading", 1)
-        runInBackground("RPP-BrowseInstall", { UpdateChecker.downloadAll(listOf(update), batch) }) { result ->
-            busy = null
-            progress = null
-            result.exceptionOrNull()?.let { logger.error("Failed to install {}", hit.title, it) }
-            val newId = result.getOrNull()?.replacements?.values?.firstOrNull()
-            if (newId == null) {
-                showError(t("status.resourcepackprofiles.download_failed"))
-                return@runInBackground
-            }
-            minecraft.resourcePackRepository.reload()
-            PackSession.identified[newId] = PackIdentity(update.versionId, update.projectId)
+        jobs.install(update) { newId ->
             refreshInstalled()
             if (addToProfile) addToProfile(newId, update)
             else showStatus(t("status.resourcepackprofiles.browse_installed", hit.title), Theme.SUCCESS)
@@ -514,9 +506,9 @@ class BrowseScreen(
         }
         primaryButton.setMessage(label)
         primaryButton.setWidth(font.width(label) + 16)
-        primaryButton.active = busy == null && update != null && !inProfile && !(installed && profileName == null)
+        primaryButton.active = !jobs.isBusy && update != null && !inProfile && !(installed && profileName == null)
         secondaryButton.visible = showDetail && profileName != null && !installed
-        secondaryButton.active = busy == null && update != null
+        secondaryButton.active = !jobs.isBusy && update != null
         secondaryButton.setX(primaryButton.x + primaryButton.getWidth() + 4)
         val secondaryLabel = t("button.resourcepackprofiles.browse_install_only")
         secondaryButton.setMessage(secondaryLabel)
@@ -571,8 +563,8 @@ class BrowseScreen(
     private fun extractStatus(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int) {
         val right = doneButton.x - 6
         val now = System.currentTimeMillis()
-        val batch = progress
-        val busyText = busy
+        val batch = jobs.progress
+        val busyText = jobs.busy
         val statusText = status
         when {
             busyText != null && batch != null -> StatusPill.drawProgress(context, font, batch, pad, height - 24, right, mouseX, mouseY)
