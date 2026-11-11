@@ -448,7 +448,7 @@ class ProfileScreen @JvmOverloads constructor(
 
     /** Orders packs by the chosen [librarySort]; false sorts before true, so "first" groups lead. */
     private fun libraryComparator(): Comparator<Pack> = when (librarySort) {
-        LibrarySort.UPDATES -> compareBy { checks[it.id] !is PackCheck.UpdateAvailable }
+        LibrarySort.UPDATES -> compareBy { !hasLibraryUpdate(it.id) }
         LibrarySort.OUTDATED -> compareBy { it.compatibility.isCompatible }
         LibrarySort.UNUSED -> {
             val unused = unusedPackIds().toSet()
@@ -1021,7 +1021,7 @@ class ProfileScreen @JvmOverloads constructor(
 
     /** Asks Modrinth again: for the open profile's packs, or for everything in "All Packs". */
     private fun onRefreshUpdates() {
-        if (libraryMode) jobs.check(allCheckableIds()) else selected?.let { checkUpdates(listOf(it)) }
+        if (libraryMode) checkLibrary(allCheckableIds()) else selected?.let { checkUpdates(listOf(it)) }
     }
 
     private fun onUpdateSelected() {
@@ -1043,11 +1043,22 @@ class ProfileScreen @JvmOverloads constructor(
     private fun checkUpdates(profiles: List<ResourcePackProfile>) =
         jobs.check(profiles.flatMap { it.packIds }.distinct())
 
+    /**
+     * Checks installed packs the way "All Packs" shows them: an update whose newer file is
+     * already downloaded has no Download chip there, so the status line doesn't count it either.
+     */
+    private fun checkLibrary(ids: List<String>, single: Boolean = false, quiet: Boolean = false) =
+        jobs.check(ids, single, quiet) { !isInstalled(it) }
+
     /** Pack files that can be looked up on Modrinth, across everything installed. */
     private fun allCheckableIds(): List<String> = userPacks().map { it.id }.filter { isPackFile(it) }
 
     /** Whether the file an update would download is already in the resourcepacks folder. */
     private fun isInstalled(update: PackUpdate): Boolean = "file/${update.fileName}" in packsById
+
+    /** Whether [packId] has an update whose newer file isn't downloaded yet, as "All Packs" shows it. */
+    private fun hasLibraryUpdate(packId: String): Boolean =
+        (checks[packId] as? PackCheck.UpdateAvailable)?.update?.let { !isInstalled(it) } == true
 
     /** Updates found for installed packs whose newer file has not been downloaded yet. */
     private fun libraryUpdates(): List<PackUpdate> =
@@ -1344,7 +1355,7 @@ class ProfileScreen @JvmOverloads constructor(
                     return true
                 }
                 InputConstants.KEY_U -> if (!typing) {
-                    if (libraryMode) jobs.check(allCheckableIds()) else selected?.let { checkUpdates(listOf(it)) }
+                    if (libraryMode) checkLibrary(allCheckableIds()) else selected?.let { checkUpdates(listOf(it)) }
                     return true
                 }
             }
@@ -1711,7 +1722,7 @@ class ProfileScreen @JvmOverloads constructor(
         }
         if (setting && !PackSession.autoChecked && !jobs.isBusy) {
             PackSession.autoChecked = true
-            jobs.check(allCheckableIds(), quiet = true)
+            checkLibrary(allCheckableIds(), quiet = true)
         }
     }
 
@@ -1991,7 +2002,7 @@ class ProfileScreen @JvmOverloads constructor(
             }
             if (checkable && overCheck(event.x())) {
                 val ids = checkTargets()
-                jobs.check(ids, single = ids.size == 1)
+                if (libraryMode) checkLibrary(ids, single = ids.size == 1) else jobs.check(ids, single = ids.size == 1)
                 return true
             }
             return onClick(event)

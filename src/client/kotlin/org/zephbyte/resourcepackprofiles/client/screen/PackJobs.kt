@@ -64,8 +64,12 @@ class PackJobs(private val host: Host) {
      * Checks [ids] against Modrinth. With [single], the status line reports on that one pack by
      * name instead of giving totals. With [quiet] (the automatic check), it only reports when
      * updates were found and stays silent on failure.
+     *
+     * [pending] decides which found updates the status line counts as updates, so it matches
+     * what the screen shows. "All Packs" passes a filter that drops updates whose newer file is
+     * already downloaded, since its rows show nothing for those; they count as up to date.
      */
-    fun check(ids: List<String>, single: Boolean = false, quiet: Boolean = false) {
+    fun check(ids: List<String>, single: Boolean = false, quiet: Boolean = false, pending: (PackUpdate) -> Boolean = { true }) {
         if (isBusy || ids.isEmpty()) return
         busy = t("status.resourcepackprofiles.checking")
         runInBackground("RPP-UpdateCheck", { UpdateChecker.check(ids) }) { result ->
@@ -74,19 +78,21 @@ class PackJobs(private val host: Host) {
                 PackSession.checks.putAll(report.checks)
                 ProfileManager.recordSources(report.identities, report.projects)
                 host.refresh()
+                fun isPending(check: PackCheck?) = check is PackCheck.UpdateAvailable && pending(check.update)
                 if (single) {
                     val name = host.packName(ids.first())
-                    when (report.checks[ids.first()]) {
-                        is PackCheck.UpdateAvailable -> host.showStatus(t("status.resourcepackprofiles.pack_update_found", name), Theme.SUCCESS)
-                        is PackCheck.UpToDate -> host.showStatus(t("status.resourcepackprofiles.pack_up_to_date", name), Theme.SUCCESS)
-                        is PackCheck.NoCompatibleVersion -> host.showStatus(t("status.resourcepackprofiles.pack_no_version", name))
+                    val check = report.checks[ids.first()]
+                    when {
+                        isPending(check) -> host.showStatus(t("status.resourcepackprofiles.pack_update_found", name), Theme.SUCCESS)
+                        check is PackCheck.UpToDate || check is PackCheck.UpdateAvailable -> host.showStatus(t("status.resourcepackprofiles.pack_up_to_date", name), Theme.SUCCESS)
+                        check is PackCheck.NoCompatibleVersion -> host.showStatus(t("status.resourcepackprofiles.pack_no_version", name))
                         else -> host.showStatus(t("status.resourcepackprofiles.pack_not_on_modrinth", name))
                     }
                     return@onSuccess
                 }
                 val results = report.checks.values
-                val found = results.count { it is PackCheck.UpdateAvailable }
-                val current = results.count { it is PackCheck.UpToDate }
+                val found = results.count { isPending(it) }
+                val current = results.count { it is PackCheck.UpToDate || (it is PackCheck.UpdateAvailable && !isPending(it)) }
                 val noVersion = results.count { it is PackCheck.NoCompatibleVersion }
                 val unknown = results.count { it is PackCheck.NotOnModrinth || it is PackCheck.Unavailable }
                 val summary =

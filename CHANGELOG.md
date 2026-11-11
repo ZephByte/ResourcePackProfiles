@@ -1,5 +1,19 @@
 # Changelog
 
+## Resource Pack Profiles - v2.0.1
+
+Bug fix release for Minecraft 26.1, 26.2, and 26.3.
+
+### Fixes
+- **All Packs update count** - checking for updates in All Packs no longer counts packs whose newer version is already downloaded, so the number of updates matches the Download buttons shown. The **Updates** sort follows the same rule
+
+### Requirements
+| Minecraft | Fabric Loader | Fabric API | Fabric Language Kotlin | Mod Menu *(optional)* |
+|---|---|---|---|---|
+| 26.3 | 0.19.5+ | 0.161.0+26.3 | 1.14.1+kotlin.2.4.20 | 21.0.0-beta.1 |
+| 26.2 | 0.19.3+ | 0.152.2+26.2 | 1.13.12+kotlin.2.4.0 | 20.0.0-beta.3 |
+| 26.1 - 26.1.2 | 0.19.3+ | 0.145.1+26.1 | 1.13.12+kotlin.2.4.0 | 18.0.0-beta.1 |
+
 ## Resource Pack Profiles - v2.0.0
 
 **Resource Pack Profiles** becomes a resource pack manager: a redesigned interface, pack updates, and tools to keep your pack folder tidy. For Minecraft 26.1, 26.2, and 26.3. Existing profiles and `.rpprofile` files keep working.
