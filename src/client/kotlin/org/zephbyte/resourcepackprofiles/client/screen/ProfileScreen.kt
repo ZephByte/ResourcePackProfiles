@@ -20,6 +20,7 @@ import org.zephbyte.resourcepackprofiles.client.profile.ImportResult
 import org.zephbyte.resourcepackprofiles.client.profile.PackIcons
 import org.zephbyte.resourcepackprofiles.client.profile.PackTrash
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileIconManager
+import org.zephbyte.resourcepackprofiles.client.profile.ModSettings
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
 import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
 import org.zephbyte.resourcepackprofiles.client.ui.DragReorder
@@ -1030,7 +1031,7 @@ class ProfileScreen @JvmOverloads constructor(
         if (updates.isEmpty()) return
         val name = profile.name
         // A single pack can simply be switched back, so the backup question is for bulk updates.
-        val choice = if (updates.size < 2) BackupChoice.NEVER else ProfileManager.backupOnUpdateAll()
+        val choice = if (updates.size < 2) BackupChoice.NEVER else ModSettings.backupChoice
         when (choice) {
             BackupChoice.ALWAYS -> applyUpdates(name, updates, backup = true)
             BackupChoice.NEVER -> applyUpdates(name, updates)
@@ -1368,7 +1369,7 @@ class ProfileScreen @JvmOverloads constructor(
         commitRename()
         ProfileIconManager.cleanup()
         if (replacesVanilla) vanilla.rpp_discard()
-        ProfileManager.allowVanillaScreenOnce()
+        ModSettings.allowVanillaScreenOnce()
         // A fresh instance, so it reflects any packs applied, installed or deleted here.
         minecraft.showScreen(vanilla.rpp_createRefreshedScreen())
     }
@@ -1843,7 +1844,7 @@ class ProfileScreen @JvmOverloads constructor(
 
     override fun tick() {
         super.tick()
-        val setting = ProfileManager.autoCheckSetting()
+        val setting = ModSettings.autoCheckUpdates
         if (setting == null) {
             // Asked once per screen; pressing Esc leaves it undecided, to be asked next time.
             if (!firstRunShown) {
@@ -1855,8 +1856,8 @@ class ProfileScreen @JvmOverloads constructor(
                     t("button.resourcepackprofiles.auto_check_on"),
                     destructive = false,
                     cancelLabel = t("button.resourcepackprofiles.auto_check_off"),
-                    onCancel = { ProfileManager.setAutoCheckUpdates(false) }
-                ) { ProfileManager.setAutoCheckUpdates(true) })
+                    onCancel = { ModSettings.autoCheckUpdates = false }
+                ) { ModSettings.autoCheckUpdates = true })
             }
             return
         }

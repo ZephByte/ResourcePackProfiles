@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.zephbyte.resourcepackprofiles.client.ProfileButton;
 import org.zephbyte.resourcepackprofiles.client.RefreshablePackScreen;
-import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager;
+import org.zephbyte.resourcepackprofiles.client.profile.ModSettings;
 import org.zephbyte.resourcepackprofiles.client.screen.ProfileScreen;
 
 import java.nio.file.Path;
@@ -54,7 +54,7 @@ public abstract class PackScreenMixin extends Screen implements RefreshablePackS
         if (!this.rpp_replaceChecked) {
             this.rpp_replaceChecked = true;
             if (this.packDir.equals(this.minecraft.getResourcePackDirectory())
-                    && ProfileManager.INSTANCE.consumeReplaceVanillaScreen()) {
+                    && ModSettings.INSTANCE.consumeReplaceVanillaScreen()) {
                 rpp_openProfiles(true);
             }
         }

@@ -5,7 +5,7 @@ import net.minecraft.client.gui.screens.Screen
 import net.minecraft.network.chat.CommonComponents
 import net.minecraft.network.chat.Component
 import org.zephbyte.resourcepackprofiles.client.profile.BackupChoice
-import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
+import org.zephbyte.resourcepackprofiles.client.profile.ModSettings
 import org.zephbyte.resourcepackprofiles.client.ui.FlatButton
 import org.zephbyte.resourcepackprofiles.client.ui.FlatCheckbox
 import org.zephbyte.resourcepackprofiles.client.ui.Theme
@@ -43,16 +43,16 @@ class SettingsScreen(
             FlatCheckbox(
                 left, panelY + replaceY, font,
                 Component.translatable("setting.resourcepackprofiles.replace_vanilla"),
-                ProfileManager.replacesVanillaScreen()
-            ) { ProfileManager.setReplacesVanillaScreen(it) }
+                ModSettings.replaceVanillaScreen
+            ) { ModSettings.replaceVanillaScreen = it }
         )
 
         addRenderableWidget(
             FlatCheckbox(
                 left, panelY + autoCheckY, font,
                 Component.translatable("setting.resourcepackprofiles.auto_check"),
-                ProfileManager.autoCheckSetting() == true
-            ) { ProfileManager.setAutoCheckUpdates(it) }
+                ModSettings.autoCheckUpdates == true
+            ) { ModSettings.autoCheckUpdates = it }
         )
 
         // One button per choice; the current one is drawn filled.
@@ -65,7 +65,7 @@ class SettingsScreen(
                 left + i * (buttonWidth + gap), panelY + backupY + 12, buttonWidth, 16,
                 Component.translatable("setting.resourcepackprofiles.backup." + choice.id)
             ) {
-                ProfileManager.setBackupOnUpdateAll(choice)
+                ModSettings.backupChoice = choice
                 syncBackupButtons()
             }
             backupButtons[choice] = button
@@ -85,7 +85,7 @@ class SettingsScreen(
     }
 
     private fun syncBackupButtons() {
-        val current = ProfileManager.backupOnUpdateAll()
+        val current = ModSettings.backupChoice
         backupButtons.forEach { (choice, button) ->
             button.style = if (choice == current) FlatButton.Style.PRIMARY else FlatButton.Style.GHOST
         }
@@ -109,7 +109,7 @@ class SettingsScreen(
         val backupLabel = Component.translatable("setting.resourcepackprofiles.backup")
         context.text(font, backupLabel, left, panelY + backupY, Theme.TEXT_SECONDARY, true)
         // The hint describes whichever choice is active.
-        hint(context, "setting.resourcepackprofiles.backup." + ProfileManager.backupOnUpdateAll().id + ".hint", panelY + backupY + 33)
+        hint(context, "setting.resourcepackprofiles.backup." + ModSettings.backupChoice.id + ".hint", panelY + backupY + 33)
     }
 
     private fun hint(context: GuiGraphicsExtractor, key: String, y: Int) {

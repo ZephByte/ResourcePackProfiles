@@ -5,7 +5,7 @@ import net.minecraft.client.gui.screens.Screen
 import net.minecraft.network.chat.CommonComponents
 import net.minecraft.network.chat.Component
 import org.zephbyte.resourcepackprofiles.client.profile.BackupChoice
-import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
+import org.zephbyte.resourcepackprofiles.client.profile.ModSettings
 import org.zephbyte.resourcepackprofiles.client.ui.FlatButton
 import org.zephbyte.resourcepackprofiles.client.ui.FlatCheckbox
 import org.zephbyte.resourcepackprofiles.client.ui.Theme
@@ -67,7 +67,7 @@ class BackupPromptScreen(
     }
 
     private fun choose(backup: Boolean) {
-        if (remember) ProfileManager.setBackupOnUpdateAll(if (backup) BackupChoice.ALWAYS else BackupChoice.NEVER)
+        if (remember) ModSettings.backupChoice = if (backup) BackupChoice.ALWAYS else BackupChoice.NEVER
         minecraft.showScreen(parent)
         onChoice(backup)
     }

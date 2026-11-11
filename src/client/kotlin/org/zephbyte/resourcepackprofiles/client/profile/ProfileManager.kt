@@ -34,11 +34,6 @@ private data class ExportData(
     val packProjects: Map<String, String>? = null
 )
 
-/** Whether updating several packs at once saves a backup copy of the profile first. */
-enum class BackupChoice(val id: String) {
-    ASK("ask"), ALWAYS("always"), NEVER("never")
-}
-
 /** Outcome of importing a profile from a file. */
 sealed interface ImportResult {
     /** The profile was imported (or overwritten) under [name]. */
@@ -59,11 +54,6 @@ object ProfileManager {
     private val profiles = mutableMapOf<String, ResourcePackProfile>()
     private var lastActiveProfileName: String? = null
     private val autoApply = mutableMapOf<String, String>()
-    private var replaceVanillaScreen = true
-    private var backupOnUpdateAll = BackupChoice.ASK
-    private var autoCheckUpdates: Boolean? = null
-    // One-shot escape hatch so the vanilla screen can still be opened on request.
-    private var allowVanillaScreenOnce = false
 
     fun load() {
         profiles.clear()
@@ -75,9 +65,7 @@ object ProfileManager {
                 config.profiles.forEach { profiles[it.name] = it }
                 lastActiveProfileName = config.lastActiveProfile
                 config.autoApply?.let { autoApply.putAll(it) }
-                replaceVanillaScreen = config.replaceVanillaScreen ?: true
-                backupOnUpdateAll = BackupChoice.entries.firstOrNull { it.id == config.backupOnUpdateAll } ?: BackupChoice.ASK
-                autoCheckUpdates = config.autoCheckUpdates
+                ModSettings.load(config.replaceVanillaScreen, config.backupOnUpdateAll, config.autoCheckUpdates)
                 logger.info("Loaded {} profile(s) from config", profiles.size)
             } catch (e: Exception) {
                 logger.error("Failed to load profiles config", e)
@@ -86,62 +74,18 @@ object ProfileManager {
         }
     }
 
-    private fun save() {
+    /** Writes the config file: the profiles, and the [ModSettings] stored alongside them. */
+    internal fun save() {
         try {
             Files.createDirectories(configPath.parent)
             val config = ConfigData(
-                profiles.values.toList(), lastActiveProfileName, autoApply.toMap().ifEmpty { null }, replaceVanillaScreen,
-                backupOnUpdateAll.id, autoCheckUpdates
+                profiles.values.toList(), lastActiveProfileName, autoApply.toMap().ifEmpty { null },
+                ModSettings.replaceVanillaScreen, ModSettings.backupChoice.id, ModSettings.autoCheckUpdates
             )
             Files.writeString(configPath, gson.toJson(config))
         } catch (e: Exception) {
             logger.error("Failed to save profiles config", e)
         }
-    }
-
-    // --- Automatic update checks ---
-
-    /** True/false once the user has chosen; null while the first-run question is still pending. */
-    fun autoCheckSetting(): Boolean? = autoCheckUpdates
-
-    fun setAutoCheckUpdates(enabled: Boolean) {
-        autoCheckUpdates = enabled
-        save()
-    }
-
-    // --- Backup before updating several packs ---
-
-    fun backupOnUpdateAll(): BackupChoice = backupOnUpdateAll
-
-    fun setBackupOnUpdateAll(choice: BackupChoice) {
-        backupOnUpdateAll = choice
-        save()
-    }
-
-    // --- Replacing the vanilla resource pack screen ---
-
-    fun replacesVanillaScreen(): Boolean = replaceVanillaScreen
-
-    fun setReplacesVanillaScreen(enabled: Boolean) {
-        replaceVanillaScreen = enabled
-        save()
-    }
-
-    /** Lets the next vanilla resource pack screen open normally even when replacement is on. */
-    fun allowVanillaScreenOnce() {
-        allowVanillaScreenOnce = true
-    }
-
-    /**
-     * Called when a vanilla resource pack screen opens: true if the profile screen should take
-     * its place. Consumes the one-shot allowance set by [allowVanillaScreenOnce].
-     */
-    fun consumeReplaceVanillaScreen(): Boolean {
-        if (allowVanillaScreenOnce) {
-            allowVanillaScreenOnce = false
-            return false
-        }
-        return replaceVanillaScreen
     }
 
     fun hasProfile(name: String): Boolean = name in profiles
