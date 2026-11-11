@@ -18,7 +18,7 @@ private data class ConfigData(
     val autoApply: Map<String, String>? = null,
     /** Whether the profile screen opens in place of the vanilla resource pack screen. Null = default (on). */
     val replaceVanillaScreen: Boolean? = null,
-    /** "ask" (default), "always" or "never": whether Update All backs the profile up first. */
+    /** "ask" (default), "always" or "never": whether updating several packs backs the profile up first. */
     val backupOnUpdateAll: String? = null,
     /** Whether packs are checked for updates automatically. Null until the user has been asked. */
     val autoCheckUpdates: Boolean? = null
@@ -34,7 +34,7 @@ private data class ExportData(
     val packProjects: Map<String, String>? = null
 )
 
-/** Whether "Update All" saves a backup copy of the profile first. */
+/** Whether updating several packs at once saves a backup copy of the profile first. */
 enum class BackupChoice(val id: String) {
     ASK("ask"), ALWAYS("always"), NEVER("never")
 }
@@ -109,7 +109,7 @@ object ProfileManager {
         save()
     }
 
-    // --- Backup before Update All ---
+    // --- Backup before updating several packs ---
 
     fun backupOnUpdateAll(): BackupChoice = backupOnUpdateAll
 
@@ -527,7 +527,13 @@ object ProfileManager {
     fun importProfileFromPath(filePath: Path, overwriteName: String? = null, renameOnConflict: Boolean = false): ImportResult {
         return try {
             val json = Files.readString(filePath)
-            val data: ExportData = gson.fromJson(json, ExportData::class.java)
+            val data: ExportData? = gson.fromJson(json, ExportData::class.java)
+            // Gson ignores Kotlin nullability: a file missing these fields gives nulls here.
+            @Suppress("SENSELESS_COMPARISON")
+            if (data == null || data.name == null || data.name.isBlank() || data.packIds == null) {
+                logger.error("Failed to import profile: {} is not a profile file", filePath.fileName)
+                return ImportResult.Failed
+            }
             var name = overwriteName ?: data.name
 
             if (overwriteName == null && hasProfile(name)) {

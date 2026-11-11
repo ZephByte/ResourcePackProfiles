@@ -123,7 +123,7 @@
   "setting.resourcepackprofiles.replace_vanilla": "Replace the vanilla resource pack screen",
   "setting.resourcepackprofiles.replace_vanilla.hint": "Options > Resource Packs opens this mod's screen.",
   "setting.resourcepackprofiles.replace_vanilla.hint2": "When off, the vanilla screen has a Profiles button.",
-  "setting.resourcepackprofiles.backup": "Back up a profile before Update All",
+  "setting.resourcepackprofiles.backup": "Back up a profile before updating several packs",
   "setting.resourcepackprofiles.backup.ask": "Ask",
   "setting.resourcepackprofiles.backup.always": "Always",
   "setting.resourcepackprofiles.backup.never": "Never",

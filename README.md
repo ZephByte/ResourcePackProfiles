@@ -6,7 +6,7 @@
 [![CurseForge](https://img.shields.io/curseforge/v/1583478?label=curseforge&logo=curseforge&color=F16436)](https://www.curseforge.com/minecraft/mc-mods/resource-pack-profiles)
 [![License: MIT](https://img.shields.io/github/license/ZephByte/ResourcePackProfiles)](LICENSE)
 
-A client-side Fabric mod for saving, managing, and sharing named resource pack load order profiles. Switch between different pack setups from the resource pack screen.
+A client-side Fabric mod for managing resource packs. Save named load-order profiles and switch between them in seconds, keep packs up to date from Modrinth, and find new ones without leaving the game.
 
 ---
 
@@ -22,11 +22,11 @@ A client-side Fabric mod for saving, managing, and sharing named resource pack l
 - **Select several packs:** Ctrl+click and Shift+click work like a file browser, so you can add, remove, switch off, move, check, or trash many packs at once.
 - **Search:** filter profiles by name or by the packs they contain.
 - **Favorites:** star profiles to pin them to the top of the list.
-- **Custom icons:** set an image for any profile. Profiles without one get an icon built from their packs' art.
+- **Custom icons:** set a PNG, JPEG, or WebP image for any profile. Profiles without one get an icon built from their packs' art.
 - **Import and export:** share profiles as `.rpprofile` files, or drop them onto the screen to import. Dropping a `.zip` installs it as a resource pack.
 - **Switch packs off:** untick a pack to skip it in a profile without losing its place in the load order.
 - **All Packs view:** see every installed pack and how many profiles use it. Unused packs can be moved to a trash folder, which you can undo until you empty the trash.
-- **Missing packs:** profiles that reference packs you don't have are flagged, and can still be applied without them. Importing a profile offers to download the missing packs from Modrinth, and a **Download N Missing** button does the same later. If the exact version has been removed from Modrinth, click the arrow on the missing pack to pick another version. This works for packs the sharer had from Modrinth, in profiles exported by 2.0 or later.
+- **Missing packs:** profiles that reference packs you don't have are flagged, and can still be applied without them. Importing a profile offers to download the missing packs from Modrinth, and a **Download N Missing** button does the same later. If the exact version has been removed from Modrinth, click the arrow on the missing pack to pick another version. This works for packs the sharer had from Modrinth, as long as their copy of the mod recorded where each pack came from (profiles exported by older versions don't include this).
 - **Browse Modrinth:** search Modrinth's resource packs from inside the game, filter by category, resolution and game version, and install any version. Opened from a profile, a pack can be installed and added to it in one click.
 - **Compatibility warnings:** packs made for an older or newer version of Minecraft are flagged.
 - **Automatic switching (optional):** bind a profile to a world or server and it is applied when you join. Nothing switches automatically unless you set it up.
@@ -68,14 +68,14 @@ Client-side only. No server installation is needed.
 
 **Options > Resource Packs** opens the **Resource Pack Profiles** screen in place of the vanilla one. It is also available via [Mod Menu](https://modrinth.com/mod/modmenu).
 
-To keep the vanilla screen, click **Settings** (top right) and untick **Replace the vanilla resource pack screen**. Settings is also where you choose whether **Update All** backs up the profile first (Ask, Always, or Never). The vanilla screen then opens as usual, with a **Profiles** button *(left of Open Pack Folder)* to get here. **Settings > Open Vanilla Pack Screen** opens it once without changing the setting.
+To keep the vanilla screen, click **Settings** (top right) and untick **Replace the vanilla resource pack screen**. Settings is also where you choose whether updating several packs at once backs up the profile first (Ask, Always, or Never). The vanilla screen then opens as usual, with a **Profiles** button *(left of Open Pack Folder)* to get here. **Settings > Open Vanilla Pack Screen** opens it once without changing the setting.
 
 | Action | How |
 |---|---|
 | Save current packs as a profile | Click **+**, then type a name |
 | Apply a profile | Select it and click **Apply**, double-click it, or press **Enter** |
 | Rename a profile | Click its name on the right, or press **F2** |
-| Add packs | Click **Add Packs**, then click each pack to add |
+| Add packs | Click **Add Packs**, then click each pack to add, or Ctrl/Shift+click several and click **Add N Selected** |
 | Remove a pack | Hover the pack and click **x**, or select it and press **Delete** |
 | Reorder packs | Drag a pack, or select it and press **Shift+Up/Down** |
 | Act on several packs | **Ctrl+click** or **Shift+click** packs (**Ctrl+A** for all), then use any pack's buttons or keys |
@@ -89,7 +89,7 @@ To keep the vanilla screen, click **Settings** (top right) and untick **Replace 
 | Download missing packs | Click **Download N Missing** (shown when a profile has missing packs from Modrinth) |
 | Delete a profile | Hover it and click **x**, or select it and press **Del** |
 | Duplicate or export a profile | Use the buttons next to **Apply** |
-| Change a profile's icon | Click its icon in the header (PNG or JPEG) |
+| Change a profile's icon | Click its icon in the header (PNG, JPEG, or WebP) |
 | Apply a profile automatically | While in a world or on a server, click **...** then **Auto-Apply When Joining** |
 | Clean up pack files | Select **All Packs** at the top of the list, then click **x** on a pack or **Delete N Unused** |
 | See which packs need attention | In **All Packs**, use **Sort** to list packs with updates, outdated packs, or unused packs first |
@@ -128,11 +128,18 @@ Exported `.rpprofile` files are standard JSON:
   "favorite": false,
   "customIcon": "<base64 encoded PNG, or null>",
   "disabledPackIds": ["file/Pack2"],
-  "packSources": { "file/Pack1": "<Modrinth version id>" }
+  "packSources": { "file/Pack1": "<Modrinth version id>" },
+  "packProjects": { "file/Pack1": "<Modrinth project id>" }
 }
 ```
 
-`disabledPackIds` and `packSources` are optional. `packSources` is what lets someone who imports the profile download packs they don't have. Files exported by older versions still import.
+`disabledPackIds`, `packSources`, and `packProjects` are optional. `packSources` is what lets someone who imports the profile download packs they don't have, and `packProjects` lets them pick another version when that exact one has been removed. Files exported by older versions still import.
+
+---
+
+## Network Use
+
+The mod only goes online to talk to Modrinth: to check packs for updates, to download a pack, and while you browse Modrinth. Update checks send Modrinth the hashes of your pack files, which is how it recognises them. The automatic check asks before it runs for the first time and can be turned off in **Settings**. Nothing is sent anywhere else.
 
 ---
 
@@ -148,7 +155,9 @@ cd ResourcePackProfiles
 
 ## License
 
-MIT - free to use, modify, and redistribute. See [LICENSE](LICENSE).
+MIT - free to use, modify, and redistribute. See [LICENSE](LICENSE.txt).
+
+The mod jar bundles the WebP reader from [TwelveMonkeys ImageIO](https://github.com/haraldk/TwelveMonkeys) (BSD 3-Clause) so that Modrinth's WebP icons can be shown. Its license is included in the jar at `META-INF/licenses/TwelveMonkeys-LICENSE.txt`.
 
 ---
 

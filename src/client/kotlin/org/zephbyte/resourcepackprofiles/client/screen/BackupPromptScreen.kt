@@ -13,7 +13,7 @@ import org.zephbyte.resourcepackprofiles.client.util.ScreenUtils
 import org.zephbyte.resourcepackprofiles.client.util.showScreen
 
 /**
- * Asked before "Update All": should a backup copy of the profile be saved first? With "Don't ask
+ * Asked before updating several packs at once: should a backup copy of the profile be saved first? With "Don't ask
  * again" ticked the answer is remembered, which stops this screen from appearing again
  * (changeable later under Settings).
  *

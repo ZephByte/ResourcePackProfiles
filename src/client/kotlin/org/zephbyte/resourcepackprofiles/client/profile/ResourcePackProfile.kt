@@ -5,7 +5,7 @@ data class ResourcePackProfile(
     val packIds: List<String>,
     val customIcon: String? = null,
     val favorite: Boolean = false,
-    // The fields below were added in 2.0. They are nullable because Gson leaves fields that
+    // The fields below were added after 1.0. They are nullable because Gson leaves fields that
     // are absent from older config files as null, ignoring Kotlin defaults.
     /** Packs kept in [packIds] (so they hold their place in the order) but skipped when applying. */
     val disabledPackIds: List<String>? = null,

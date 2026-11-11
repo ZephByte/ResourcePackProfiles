@@ -3,7 +3,7 @@
   "id": "resourcepackprofiles",
   "version": "${version}",
   "name": "Resource Pack Profiles",
-  "description": "Save, manage, and share named resource pack load-order profiles. Switch between completely different pack setups in seconds, right from the resource pack screen.",
+  "description": "Manage your resource packs: save, switch, and share named load-order profiles, keep packs up to date from Modrinth, and browse Modrinth for new ones, all from one screen.",
   "authors": [
     "ZephByte"
   ],
