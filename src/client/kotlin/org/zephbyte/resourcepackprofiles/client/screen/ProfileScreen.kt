@@ -26,6 +26,8 @@ import org.zephbyte.resourcepackprofiles.client.profile.ProfileIconManager
 import org.zephbyte.resourcepackprofiles.client.profile.ProfileManager
 import org.zephbyte.resourcepackprofiles.client.profile.ResourcePackProfile
 import org.zephbyte.resourcepackprofiles.client.ui.FlatButton
+import org.zephbyte.resourcepackprofiles.client.ui.FlatSelectionList
+import org.zephbyte.resourcepackprofiles.client.ui.StatusPill
 import org.zephbyte.resourcepackprofiles.client.ui.Icon
 import org.zephbyte.resourcepackprofiles.client.ui.Theme
 import org.zephbyte.resourcepackprofiles.client.update.DownloadOutcome
@@ -164,6 +166,7 @@ class ProfileScreen @JvmOverloads constructor(
     private lateinit var addButton: FlatButton
     private lateinit var selectAllButton: FlatButton
     private lateinit var refreshButton: FlatButton
+    private lateinit var browseAddButton: FlatButton
     private lateinit var sortButton: FlatButton
     private lateinit var missingButton: FlatButton
     private lateinit var unusedButton: FlatButton
@@ -187,7 +190,7 @@ class ProfileScreen @JvmOverloads constructor(
     // tall controls, and HEADER_GAP between a header block and the list beneath it.
     private val searchY get() = panelTop + 8
     private val leftHeaderBottom get() = searchY + 16 + 8
-    private val searchW get() = leftW - 16 - 40
+    private val searchW get() = leftW - 16 - 60
     // Header grid: a HEADER_ICON-sized icon at headerY; beside it the name over the pack count,
     // filling the icon's height; the action buttons centred on the icon at the right edge.
     private val headerY get() = panelTop + 8
@@ -231,7 +234,7 @@ class ProfileScreen @JvmOverloads constructor(
     private val packTop get() = rightHeaderBottom + HEADER_GAP
     private val footerY get() = panelBottom - 22
     /** Width of the filter field: up to "Done" in add mode, up to the sort button in All Packs. */
-    private val filterW get() = (if (libraryMode) sortButton.x - 4 else rightX + rightW - 8) - filterX
+    private val filterW get() = (if (libraryMode) sortButton.x - 4 else browseAddButton.x - 8) - filterX
 
     private fun t(key: String, vararg args: Any): Component = Component.translatable(key, *args)
 
@@ -263,6 +266,10 @@ class ProfileScreen @JvmOverloads constructor(
         searchBox.value = searchText
         addRenderableWidget(searchBox)
 
+        addRenderableWidget(
+            FlatButton(leftX + leftW - 8 - 58, searchY, 18, 16, t("tooltip.resourcepackprofiles.browse"), Icon.GLOBE) { openBrowser() }
+                .withTooltip(t("tooltip.resourcepackprofiles.browse"))
+        )
         addRenderableWidget(
             FlatButton(leftX + leftW - 8 - 38, searchY, 18, 16, t("tooltip.resourcepackprofiles.import"), Icon.IMPORT) { onImport() }
                 .withTooltip(t("tooltip.resourcepackprofiles.import"))
@@ -332,6 +339,11 @@ class ProfileScreen @JvmOverloads constructor(
         refreshButton = FlatButton(refreshX, actionRowY, 18, 16, t("tooltip.resourcepackprofiles.refresh_updates"), Icon.REFRESH) { onRefreshUpdates() }
             .withTooltip(t("tooltip.resourcepackprofiles.refresh_updates"))
         addRenderableWidget(refreshButton)
+        // While adding packs: find new ones on Modrinth, at the end of the action row.
+        val browseLabel = t("button.resourcepackprofiles.browse_modrinth")
+        val browseWidth = font.width(browseLabel) + 16
+        browseAddButton = FlatButton(rightX + rightW - 8 - browseWidth, actionRowY, browseWidth, 16, browseLabel) { openBrowser() }
+        addRenderableWidget(browseAddButton)
 
         missingButton = FlatButton(rightX + 8, footerY, 100, 16, t("button.resourcepackprofiles.download_missing", 0), style = FlatButton.Style.SUCCESS) { downloadMissing() }
             .withTooltip(t("tooltip.resourcepackprofiles.download_missing"))
@@ -504,6 +516,7 @@ class ProfileScreen @JvmOverloads constructor(
         selectAllButton.visible = false
         // In add mode the filter field takes this space.
         refreshButton.visible = (has && !addMode) || libraryMode
+        browseAddButton.visible = has && addMode
         refreshButton.setX(if (libraryMode) rightX + rightW - 8 - 18 else refreshX)
         refreshButton.setY(if (libraryMode) librarySectionY else actionRowY)
         // The sort button hugs the refresh button, and the filter field fills what is left, so
@@ -664,6 +677,13 @@ class ProfileScreen @JvmOverloads constructor(
                 if (ok) showStatus(t("status.resourcepackprofiles.exported", profile.name))
             }
         }.also { it.isDaemon = true }.start()
+    }
+
+    /** Opens the Modrinth browser; installs can be added to the profile being viewed, if any. */
+    private fun openBrowser() {
+        menu = null
+        commitRename()
+        minecraft.showScreen(BrowseScreen(this, selected?.name))
     }
 
     private fun onImport() {
@@ -1698,15 +1718,9 @@ class ProfileScreen @JvmOverloads constructor(
         val statusText = status
         val batch = progress
         when {
-            busyText != null && batch != null -> {
-                // Downloads: a bar along the bottom of the message, and the details on hover.
-                val label = t("status.resourcepackprofiles.downloading_progress", batch.finished, batch.total)
-                val bounds = statusPill(context, label, Theme.ACTIVE, 1f, right, batch.fraction())
-                if (bounds != null && mouseX >= bounds[0] && mouseX < bounds[0] + bounds[2] &&
-                    mouseY >= bounds[1] && mouseY < bounds[1] + bounds[3]) {
-                    context.setComponentTooltipForNextFrame(font, progressLines(batch), mouseX, mouseY)
-                }
-            }
+            // Downloads: a bar along the bottom of the message, and the details on hover.
+            busyText != null && batch != null ->
+                StatusPill.drawProgress(context, font, batch, pad, height - 24, right, mouseX, mouseY)
             busyText != null -> statusPill(context, busyText, Theme.ACTIVE, 1f, right)
             statusText != null && now < statusUntil -> {
                 // Fade out over the last half second.
@@ -1719,64 +1733,9 @@ class ProfileScreen @JvmOverloads constructor(
         }
     }
 
-    /**
-     * A status message on its own small panel, in line with the Undo/Done buttons. It sits over
-     * the world or menu background, so bare text would be unreadable on bright scenery. With a
-     * [fraction] it also draws a progress bar along its bottom edge. Returns the panel's
-     * x, y, width and height, or null if there was no room to draw it.
-     */
-    private fun statusPill(context: GuiGraphicsExtractor, text: Component, color: Int, alpha: Float, right: Int, fraction: Float? = null): IntArray? {
-        val padX = 6
-        val maxText = right - pad - padX * 2
-        if (maxText <= 0) return null
-        val shown = ScreenUtils.truncate(font, text.string, maxText)
-        val x = pad
-        val y = height - 24
-        val barHeight = if (fraction != null) 2 else 0
-        // Wide enough for the bar to read as a bar, but never past the buttons.
-        val w = (font.width(shown) - 1 + padX * 2).coerceAtLeast(if (fraction != null) 140 else 0).coerceAtMost(right - pad)
-        val h = 18
-        context.fill(x, y, x + w, y + h, Theme.withAlpha(Theme.RAISED_FILL, alpha))
-        context.text(font, shown, x + padX, y + (h - barHeight - 7) / 2, Theme.withAlpha(color, alpha), true)
-        if (fraction != null) {
-            context.fill(x, y + h - barHeight, x + w, y + h, Theme.CONTROL_FILL)
-            context.fill(x, y + h - barHeight, x + (w * fraction).toInt(), y + h, Theme.ACTIVE)
-        }
-        return intArrayOf(x, y, w, h)
-    }
-
-    /**
-     * Hover text for the download bar. Kept to a handful of lines however long the batch is: the
-     * count, what is downloading now, and the next few, last few finished and failed files.
-     */
-    private fun progressLines(batch: DownloadProgress): List<Component> {
-        fun names(items: List<DownloadProgress.Item>, limit: Int): String {
-            val shown = items.take(limit).joinToString(", ") { ScreenUtils.truncate(font, it.name, 150) }
-            return if (items.size > limit) "$shown, " + t("tooltip.resourcepackprofiles.progress_more", items.size - limit).string else shown
-        }
-        fun line(key: String, color: ChatFormatting, text: String): Component =
-            Component.translatable(key, text).withStyle(color)
-
-        val lines = mutableListOf<Component>(
-            t("tooltip.resourcepackprofiles.progress_title", batch.finished, batch.total, (batch.fraction() * 100).toInt())
-        )
-        val state = { wanted: DownloadProgress.State -> batch.items.filter { it.state == wanted } }
-        state(DownloadProgress.State.ACTIVE).firstOrNull()?.let {
-            lines.add(line("tooltip.resourcepackprofiles.progress_now", ChatFormatting.YELLOW, ScreenUtils.truncate(font, it.name, 200)))
-        }
-        state(DownloadProgress.State.WAITING).takeIf { it.isNotEmpty() }?.let {
-            lines.add(line("tooltip.resourcepackprofiles.progress_next", ChatFormatting.GRAY, names(it, 2)))
-        }
-        // The most recent finished files, not the first ones: those are the ones just completed.
-        state(DownloadProgress.State.DONE).takeIf { it.isNotEmpty() }?.let {
-            lines.add(line("tooltip.resourcepackprofiles.progress_done", ChatFormatting.GREEN, names(it.takeLast(2).reversed(), 2) +
-                (if (it.size > 2) ", " + t("tooltip.resourcepackprofiles.progress_earlier", it.size - 2).string else "")))
-        }
-        state(DownloadProgress.State.FAILED).takeIf { it.isNotEmpty() }?.let {
-            lines.add(line("tooltip.resourcepackprofiles.progress_failed", ChatFormatting.RED, names(it, 2)))
-        }
-        return lines
-    }
+    /** A status message in line with the Undo/Done buttons; see [StatusPill]. */
+    private fun statusPill(context: GuiGraphicsExtractor, text: Component, color: Int, alpha: Float, right: Int, fraction: Float? = null): IntArray? =
+        StatusPill.draw(context, font, text, color, alpha, pad, height - 24, right, fraction)
 
     private fun extractMenu(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int) {
         val items = menu ?: return
@@ -1867,57 +1826,8 @@ class ProfileScreen @JvmOverloads constructor(
 
     // --- Lists ---
 
-    /** Vanilla selection list (scrolling, keyboard navigation, narration) with flat chrome. */
     private abstract inner class FlatList<E : ObjectSelectionList.Entry<E>>(w: Int, h: Int, top: Int, itemHeight: Int) :
-        ObjectSelectionList<E>(minecraft, w, h, top, itemHeight) {
-
-        override fun getRowWidth(): Int = width - 10
-
-        override fun scrollBarX(): Int = x + width - scrollbarWidth()
-
-        // Vanilla pads only the top of the contents (4px). Pad the end by the same amount, so a
-        // list scrolled to the bottom ends with the same space it starts with.
-        override fun contentHeight(): Int = super.contentHeight() + 4
-
-        // Thin flat scrollbar in place of the vanilla sprites, matching the popups. The vanilla
-        // hit area (its full width) is unchanged, so dragging and clicking the track still work.
-        override fun extractScrollbar(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int) {
-            // Still run the original, but clipped to an empty area so its sprites don't show.
-            // Other mods hook this method (Smooth Scrolling animates the wheel from it), so
-            // skipping it broke wheel scrolling for anyone with such a mod installed.
-            context.enableScissor(0, 0, 0, 0)
-            try {
-                super.extractScrollbar(context, mouseX, mouseY)
-            } finally {
-                context.disableScissor()
-            }
-            if (!scrollable()) return
-            val barWidth = 2
-            val barX = scrollBarX() + scrollbarWidth() - barWidth - 1
-            // Track inset by the same 2px at the top and bottom, with the thumb mapped into it.
-            val inset = 2
-            val trackTop = y + inset
-            val trackHeight = height - inset * 2
-            context.fill(barX, trackTop, barX + barWidth, trackTop + trackHeight, Theme.DIVIDER)
-            val hot = isOverScrollbar(mouseX.toDouble(), mouseY.toDouble())
-            val thumbHeight = scrollerHeight().coerceAtMost(trackHeight)
-            val travel = (height - scrollerHeight()).coerceAtLeast(1)
-            val thumbTop = trackTop + (scrollBarY() - y) * (trackHeight - thumbHeight) / travel
-            context.fill(barX, thumbTop, barX + barWidth, thumbTop + thumbHeight, if (hot) Theme.TEXT else Theme.TEXT_SECONDARY)
-        }
-
-        // The panel behind the list is the background; rows draw their own highlight.
-        override fun extractListBackground(context: GuiGraphicsExtractor) {}
-        override fun extractListSeparators(context: GuiGraphicsExtractor) {}
-        override fun extractSelection(context: GuiGraphicsExtractor, entry: E, color: Int) {}
-
-        // Give the selected entry first crack at the key, then fall back to list navigation.
-        override fun keyPressed(event: KeyEvent): Boolean {
-            val sel = selected
-            if (sel != null && sel.keyPressed(event)) return true
-            return super.keyPressed(event)
-        }
-    }
+        FlatSelectionList<E>(minecraft, w, h, top, itemHeight)
 
     private inner class ProfileList(w: Int, h: Int, top: Int) : FlatList<ProfileRow>(w, h, top, 28) {
         private var silent = false

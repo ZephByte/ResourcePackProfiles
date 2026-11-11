@@ -47,7 +47,13 @@ class CheckReport(
  * [compatible] is whether it supports the running game version; [current] marks the version
  * that is installed right now.
  */
-class VersionChoice(val update: PackUpdate, val compatible: Boolean, val current: Boolean)
+class VersionChoice(
+    val update: PackUpdate,
+    val compatible: Boolean,
+    val current: Boolean,
+    /** The game versions this version supports, oldest first. */
+    val gameVersions: List<String> = emptyList()
+)
 
 /** Result of checking one installed pack. */
 sealed interface PackCheck {
@@ -64,11 +70,12 @@ object UpdateChecker {
     private val logger = LoggerFactory.getLogger("ResourcePackProfiles")
     private val packsDir: Path get() = FabricLoader.getInstance().gameDir.resolve("resourcepacks").normalize()
 
-    private fun gameVersion(): String =
+    /** The running Minecraft version, as Modrinth spells it (e.g. "26.3"). */
+    fun gameVersion(): String =
         FabricLoader.getInstance().getModContainer("minecraft").get().metadata.version.friendlyString
 
     /** Resolves a `file/<name>` pack id to its zip in the resourcepacks folder, or null. */
-    private fun packFile(packId: String): Path? {
+    fun packFile(packId: String): Path? {
         if (!packId.startsWith("file/")) return null
         val path = packsDir.resolve(packId.removePrefix("file/")).normalize()
         if (path.parent != packsDir) return null
@@ -194,6 +201,37 @@ object UpdateChecker {
                     ),
                     compatible = game in version.gameVersions,
                     current = version.id == current?.id
+                )
+            }
+    }
+
+    /**
+     * Every version of a project, newest first, ready to install. Nothing is installed from it
+     * yet, so the pack id is empty and no version counts as current. Blocking.
+     */
+    fun projectVersions(projectId: String, title: String): List<VersionChoice> {
+        val game = gameVersion()
+        return ModrinthApi.projectVersions(projectId)
+            .sortedByDescending { it.datePublished }
+            .mapNotNull { version ->
+                val file = version.files.firstOrNull { it.primary } ?: version.files.firstOrNull() ?: return@mapNotNull null
+                val sha512 = file.hashes["sha512"] ?: return@mapNotNull null
+                VersionChoice(
+                    PackUpdate(
+                        packId = "",
+                        projectTitle = title,
+                        currentVersion = "",
+                        newVersion = version.versionNumber,
+                        fileName = file.filename,
+                        url = file.url,
+                        sha512 = sha512.lowercase(),
+                        versionId = version.id,
+                        projectId = version.projectId,
+                        size = file.size
+                    ),
+                    compatible = game in version.gameVersions,
+                    current = false,
+                    gameVersions = version.gameVersions
                 )
             }
     }

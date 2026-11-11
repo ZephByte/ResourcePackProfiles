@@ -46,6 +46,19 @@ dependencies {
 
     implementation("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_version")}")
     implementation("com.terraformersmc:modmenu:${project.property("modmenu_version")}")
+
+    // Pure-Java WebP reader, bundled inside the mod jar. Most Modrinth project icons are WebP, which
+    // neither Minecraft's image loader nor Java's own ImageIO can decode. Jar-in-jar does not pull
+    // in transitive dependencies, so each artifact is listed.
+    val twelveMonkeys = "3.15.3"
+    listOf(
+        "com.twelvemonkeys.imageio:imageio-webp",
+        "com.twelvemonkeys.imageio:imageio-core",
+        "com.twelvemonkeys.imageio:imageio-metadata",
+        "com.twelvemonkeys.common:common-lang",
+        "com.twelvemonkeys.common:common-io",
+        "com.twelvemonkeys.common:common-image"
+    ).forEach { include(implementation("$it:$twelveMonkeys")!!) }
 }
 
 tasks.processResources {

@@ -5,6 +5,7 @@ import com.mojang.blaze3d.platform.NativeImage
 import net.minecraft.resources.Identifier
 import org.slf4j.LoggerFactory
 import org.zephbyte.resourcepackprofiles.client.util.DynamicTextureCache
+import org.zephbyte.resourcepackprofiles.client.util.ImageDecoding
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -128,6 +129,7 @@ object ProfileIconManager {
      * into the icon, so a large photo costs no more than a small one.
      */
     private fun readAsIcon(sourcePath: Path): NativeImage {
+        ImageDecoding.ensureWebp()
         val source = Files.newInputStream(sourcePath).use { ImageIO.read(it) }
             ?: throw IOException("Unsupported image format: ${sourcePath.fileName}")
         val side = minOf(source.width, source.height)

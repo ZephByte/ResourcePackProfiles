@@ -35,12 +35,22 @@ data class ApiVersion(
 
 private data class ApiProject(val id: String = "", val title: String = "")
 
-private data class ApiSearch(val hits: List<ProjectHit> = emptyList())
+/** One page of project search results. */
+data class SearchPage(
+    val hits: List<ProjectHit> = emptyList(),
+    @SerializedName("total_hits") val totalHits: Int = 0
+)
 
 /** One result of a project search. */
 data class ProjectHit(
     @SerializedName("project_id") val projectId: String = "",
-    val title: String = ""
+    val title: String = "",
+    val slug: String = "",
+    val description: String = "",
+    val author: String = "",
+    val downloads: Long = 0,
+    @SerializedName("icon_url") val iconUrl: String? = null,
+    @SerializedName("display_categories") val categories: List<String> = emptyList()
 )
 
 /**
@@ -96,12 +106,35 @@ object ModrinthApi {
     }
 
     /** Searches resource pack projects by name, best match first. */
-    fun searchProjects(query: String, limit: Int = 8): List<ProjectHit> {
-        val facets = URLEncoder.encode("[[\"project_type:resourcepack\"]]", StandardCharsets.UTF_8)
+    fun searchProjects(query: String, limit: Int = 8): List<ProjectHit> =
+        browse(query, listOf(listOf("project_type:resourcepack")), "relevance", 0, limit).hits
+
+    /**
+     * One page of a project search. [facets] are Modrinth facet groups: the groups are ANDed, the
+     * entries within a group ORed. [index] is the sort: relevance, downloads, follows, newest or
+     * updated.
+     */
+    fun browse(query: String, facets: List<List<String>>, index: String, offset: Int, limit: Int): SearchPage {
         val q = URLEncoder.encode(query, StandardCharsets.UTF_8)
-        val request = baseRequest("/search?query=$q&facets=$facets&limit=$limit").GET().build()
-        return gson.fromJson(send(request), ApiSearch::class.java)?.hits ?: emptyList()
+        val f = URLEncoder.encode(gson.toJson(facets), StandardCharsets.UTF_8)
+        val request = baseRequest("/search?query=$q&facets=$f&index=$index&offset=$offset&limit=$limit").GET().build()
+        return gson.fromJson(send(request), SearchPage::class.java) ?: SearchPage()
     }
+
+    /** Downloads an image from Modrinth's CDN. Refuses other hosts and anything over 2 MB. */
+    fun fetchImage(url: String): ByteArray {
+        val host = URI.create(url).host ?: throw IOException("Image URL has no host")
+        if (!url.startsWith("https://") || !(host == "modrinth.com" || host.endsWith(".modrinth.com"))) {
+            throw IOException("Refusing to load an image from $host")
+        }
+        openStream(url).use { input ->
+            val bytes = input.readNBytes(MAX_IMAGE_BYTES + 1)
+            if (bytes.size > MAX_IMAGE_BYTES) throw IOException("Image too large: $url")
+            return bytes
+        }
+    }
+
+    private const val MAX_IMAGE_BYTES = 2 * 1024 * 1024
 
     /** Fetches versions by their Modrinth version id. Unknown ids are absent from the result. */
     fun versionsByIds(ids: Collection<String>): List<ApiVersion> {

@@ -26,6 +26,7 @@ A client-side Fabric mod for saving, managing, and sharing named resource pack l
 - **Switch packs off:** untick a pack to skip it in a profile without losing its place in the load order.
 - **All Packs view:** see every installed pack and how many profiles use it. Unused packs can be moved to a trash folder, which you can undo until you empty the trash.
 - **Missing packs:** profiles that reference packs you don't have are flagged, and can still be applied without them. Importing a profile offers to download the missing packs from Modrinth, and a **Download N Missing** button does the same later. If the exact version has been removed from Modrinth, click the arrow on the missing pack to pick another version. This works for packs the sharer had from Modrinth, in profiles exported by 2.0 or later.
+- **Browse Modrinth:** search Modrinth's resource packs from inside the game, filter by category, resolution and game version, and install any version. Opened from a profile, a pack can be installed and added to it in one click.
 - **Compatibility warnings:** packs made for an older or newer version of Minecraft are flagged.
 - **Automatic switching (optional):** bind a profile to a world or server and it is applied when you join. Nothing switches automatically unless you set it up.
 - **Update checker:** check a single pack, a profile, or every installed pack for newer versions on Modrinth. Updating switches the profile to the new file and keeps the old one, so other profiles keep working and you can switch back. A version list lets you pick any version of a pack.
@@ -91,6 +92,7 @@ To keep the vanilla screen, click **Settings** (top right) and untick **Replace 
 | Clean up pack files | Select **All Packs** at the top of the list, then click **x** on a pack or **Delete N Unused** |
 | See which packs need attention | In **All Packs**, use **Sort** to list packs with updates, outdated packs, or unused packs first |
 | Import a profile | Click the import button next to **+**, or drop a `.rpprofile` file onto the screen |
+| Find new packs | Click the globe next to **+**, or **Browse Modrinth** while adding packs |
 | Undo the last change | Click **Undo** or press **Ctrl+Z** |
 
 Deleted packs are moved to `resourcepackprofiles-trash` in your game folder, so **Undo** can bring them back. **Empty Trash** removes them permanently.
