@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## Resource Pack Profiles - v2.0.0
 
 **Resource Pack Profiles** becomes a resource pack manager: a redesigned interface, pack updates, and tools to keep your pack folder tidy. For Minecraft 26.1, 26.2, and 26.3. Existing profiles and `.rpprofile` files keep working.
 
