@@ -45,6 +45,7 @@ import org.zephbyte.resourcepackprofiles.client.util.setGuiScreen
 import org.zephbyte.resourcepackprofiles.client.util.showScreen
 import java.nio.file.Path
 import kotlin.math.abs
+import kotlin.math.exp
 
 /**
  * The mod's single screen: profiles on the left, the selected profile's packs and actions on the
@@ -131,6 +132,16 @@ class ProfileScreen @JvmOverloads constructor(
     private var dragIndex = -1
     private var dragStartY = 0.0
     private var dragMoved = false
+    /** Latest pointer height while dragging; the lifted rows follow it. */
+    private var dragMouseY = 0.0
+    /** Distance from the top of the lifted rows to where the pointer grabbed them. */
+    private var dragGrabOffset = 0.0
+    /**
+     * Rows making way for a drag, or settling after a drop, are drawn this many pixels from their
+     * slot (by pack id). The offsets shrink to zero every frame, so rows slide instead of jumping.
+     */
+    private val rowShift = mutableMapOf<String, Float>()
+    private var lastFrameNanos = System.nanoTime()
 
     /** Packs whose available update is ticked, i.e. included in "Update N Selected". None by default. */
     private val tickedUpdates = mutableSetOf<String>()
@@ -1506,35 +1517,118 @@ class ProfileScreen @JvmOverloads constructor(
     }
 
     override fun mouseDragged(event: MouseButtonEvent, dx: Double, dy: Double): Boolean {
-        val ids = dragIds ?: return super.mouseDragged(event, dx, dy)
-        val my = event.y()
-        if (!dragMoved && abs(my - dragStartY) < 3) return true
+        dragIds ?: return super.mouseDragged(event, dx, dy)
+        dragMouseY = event.y()
+        if (!dragMoved && abs(dragMouseY - dragStartY) < 3) return true
         dragMoved = true
+        updateDragTarget()
+        return true
+    }
 
+    /** The packs being dragged, in list order: the picked ones, or just the pressed one. */
+    private fun liftedIds(): List<String> {
+        val ids = dragIds ?: return emptyList()
+        return dragGroup.ifEmpty { listOfNotNull(ids.getOrNull(dragIndex)) }
+    }
+
+    /**
+     * Top of the lifted rows. They follow the pointer up and down but stay on the list's rails:
+     * never sideways, and never past the list's top or bottom.
+     */
+    private fun floatTop(): Int {
+        val top = packList.y
+        val bottom = packList.y + packList.height - liftedIds().size * PACK_ROW_HEIGHT
+        return (dragMouseY - dragGrabOffset).toInt().coerceIn(top, maxOf(top, bottom))
+    }
+
+    /**
+     * Moves the dragged packs to the slot under the middle of the lifted pressed row. Other picked
+     * packs gather around it in list order. Rows that have to make way slide aside.
+     */
+    private fun updateDragTarget() {
+        val ids = dragIds ?: return
         val rows = packList.children()
-        if (rows.isEmpty() || dragIndex !in ids.indices) return true
+        if (rows.isEmpty() || dragIndex !in ids.indices) return
+        val lead = ids[dragIndex]
+        val group = liftedIds()
+        val probe = floatTop() + group.indexOf(lead) * PACK_ROW_HEIGHT + PACK_ROW_HEIGHT / 2
         var target = dragIndex
         when {
-            my < rows.first().y -> target = 0
-            my >= rows.last().y + rows.last().height -> target = rows.lastIndex
-            else -> rows.forEachIndexed { i, row -> if (my >= row.y && my < row.y + row.height) target = i }
+            probe < rows.first().y -> target = 0
+            probe >= rows.last().y + rows.last().height -> target = rows.lastIndex
+            else -> rows.forEachIndexed { i, row -> if (probe >= row.y && probe < row.y + row.height) target = i }
         }
-        if (target != dragIndex) {
-            // The pressed pack goes to the row under the pointer, with any other picked packs
-            // gathered around it in their list order.
-            val lead = ids[dragIndex]
-            val group = dragGroup.ifEmpty { listOf(lead) }
-            val rest = ids.filter { it !in group }
-            val start = (target - group.indexOf(lead)).coerceIn(0, rest.size)
-            val reordered = rest.subList(0, start) + group + rest.subList(start, rest.size)
-            if (reordered != ids) {
-                ids.clear()
-                ids.addAll(reordered)
-                rebuildPackList()
+        val rest = ids.filter { it !in group }
+        val start = (target - group.indexOf(lead)).coerceIn(0, rest.size)
+        val reordered = rest.subList(0, start) + group + rest.subList(start, rest.size)
+        if (reordered != ids) {
+            val before = ids.withIndex().associate { it.value to it.index }
+            ids.clear()
+            ids.addAll(reordered)
+            reordered.forEachIndexed { i, id ->
+                val was = before[id] ?: i
+                if (was != i && id !in group) rowShift[id] = (rowShift[id] ?: 0f) + (was - i) * PACK_ROW_HEIGHT
             }
-            dragIndex = ids.indexOf(lead)
+            rebuildPackList()
         }
-        return true
+        dragIndex = ids.indexOf(lead)
+    }
+
+    /** Per frame while dragging: scrolls the list when the pointer nears its top or bottom edge. */
+    private fun autoScrollDrag() {
+        if (dragIds == null || !dragMoved) return
+        val edge = 16.0
+        val top = packList.y.toDouble()
+        val bottom = (packList.y + packList.height).toDouble()
+        val step = when {
+            dragMouseY < top + edge -> -(1 + (top + edge - dragMouseY) / edge * 5)
+            dragMouseY > bottom - edge -> 1 + (dragMouseY - (bottom - edge)) / edge * 5
+            else -> return
+        }
+        val before = packList.scrollAmount()
+        packList.setScrollAmount(before + step)
+        if (packList.scrollAmount() != before) updateDragTarget()
+    }
+
+    /** Lets the offsets of sliding rows shrink towards their slots. */
+    private fun settleRows() {
+        val now = System.nanoTime()
+        val seconds = ((now - lastFrameNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
+        lastFrameNanos = now
+        if (rowShift.isEmpty()) return
+        val keep = exp(-seconds * SLIDE_RATE)
+        val it = rowShift.entries.iterator()
+        while (it.hasNext()) {
+            val entry = it.next()
+            entry.setValue(entry.value * keep)
+            if (abs(entry.value) < 0.5f) it.remove()
+        }
+    }
+
+    /** The dragged rows, popped out of the list and drawn over it where the pointer holds them. */
+    private fun extractLiftedRows(context: GuiGraphicsExtractor) {
+        if (dragIds == null || !dragMoved) return
+        val rows = packList.children()
+        val lifted = liftedIds().mapNotNull { id -> rows.firstOrNull { it.packId == id } }
+        val first = lifted.firstOrNull() ?: return
+        val top = floatTop()
+        val left = first.x
+        val right = first.x + first.width
+        val bottom = top + lifted.size * PACK_ROW_HEIGHT
+        context.nextStratum()
+        // Raised card: a soft shadow below, a solid fill and an outline. The shadow is clipped to
+        // the list, so it never spills past the list's edge when the card is at the bottom.
+        context.enableScissor(packList.x, packList.y, packList.x + packList.width, packList.y + packList.height)
+        context.fill(left + 1, top + 2, right + 1, bottom + 3, 0x50000000)
+        context.disableScissor()
+        context.fill(left, top, right, bottom, Theme.RAISED_FILL)
+        lifted.forEachIndexed { i, row ->
+            context.pose().pushMatrix()
+            context.pose().translate(0f, (top + i * PACK_ROW_HEIGHT - row.y).toFloat())
+            row.extractLifted(context)
+            context.pose().popMatrix()
+        }
+        Theme.border(context, left, top, right - left, bottom - top, Theme.CONTROL_BORDER)
     }
 
     override fun mouseReleased(event: MouseButtonEvent): Boolean {
@@ -1543,6 +1637,15 @@ class ProfileScreen @JvmOverloads constructor(
         val index = dragIndex
         val group = dragGroup
         val collapse = collapseTo
+        // Each lifted row starts from where it was dropped and glides into its slot.
+        if (moved) {
+            val top = floatTop()
+            liftedIds().forEachIndexed { i, id ->
+                packList.children().firstOrNull { it.packId == id }?.let { row ->
+                    rowShift[id] = (top + i * PACK_ROW_HEIGHT - row.y).toFloat()
+                }
+            }
+        }
         dragIds = null
         dragIndex = -1
         dragMoved = false
@@ -1718,6 +1821,8 @@ class ProfileScreen @JvmOverloads constructor(
     private fun updateFrameState() {
         refreshPackCache()
         showDownloadedIcons()
+        settleRows()
+        autoScrollDrag()
         val profile = selected
 
         if (profile != null && !nameBox.isFocused && nameBox.value != profile.name) commitRename()
@@ -1877,6 +1982,7 @@ class ProfileScreen @JvmOverloads constructor(
             extractDetail(context, profile, mx, my)
         }
 
+        extractLiftedRows(context)
         extractBottomBar(context, mx, my)
         extractMenu(context, mouseX, mouseY)
     }
@@ -2188,7 +2294,7 @@ class ProfileScreen @JvmOverloads constructor(
         }
     }
 
-    private inner class PackList(w: Int, h: Int, top: Int) : FlatList<PackRow>(w, h, top, 22) {
+    private inner class PackList(w: Int, h: Int, top: Int) : FlatList<PackRow>(w, h, top, PACK_ROW_HEIGHT) {
         // Called for clicks and keyboard navigation alike. Moving with the keys picks the row
         // moved to, as in a file browser; row clicks manage the picks themselves.
         override fun setSelected(entry: PackRow?) {
@@ -2405,6 +2511,8 @@ class ProfileScreen @JvmOverloads constructor(
             dragGroup = group
             dragIndex = index
             dragStartY = event.y()
+            dragMouseY = event.y()
+            dragGrabOffset = event.y() - y + group.indexOf(packId) * PACK_ROW_HEIGHT
             dragMoved = false
             return true
         }
@@ -2447,7 +2555,42 @@ class ProfileScreen @JvmOverloads constructor(
             return false
         }
 
+        /** Set while this row is drawn as part of the lifted card. */
+        private var drawingLifted = false
+
+        /** Draws the row as it looks while dragged: no hover state, at its own position. */
+        fun extractLifted(context: GuiGraphicsExtractor) {
+            drawingLifted = true
+            try {
+                extractRow(context, -1, -1, false)
+            } finally {
+                drawingLifted = false
+            }
+        }
+
         override fun extractContent(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean, delta: Float) {
+            if (mode == RowMode.PROFILE && dragMoved && packId in liftedIds()) {
+                // The slot the lifted row will drop into.
+                context.fill(x, y, x + width, y + height, 0x30000000)
+                Theme.border(context, x, y, width, height, Theme.DIVIDER)
+                return
+            }
+            val shift = rowShift[packId] ?: 0f
+            if (shift == 0f) {
+                extractRow(context, mouseX, mouseY, hovered)
+                return
+            }
+            context.pose().pushMatrix()
+            context.pose().translate(0f, shift)
+            try {
+                // Hover follows the slot, not the drawn position, so it is left out mid-slide.
+                extractRow(context, -1, -1, false)
+            } finally {
+                context.pose().popMatrix()
+            }
+        }
+
+        private fun extractRow(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, hovered: Boolean) {
             if (mode == RowMode.SECTION) {
                 // A small heading with a rule after it, sitting low in the row so it reads as the
                 // start of the rows below rather than one of them.
@@ -2459,7 +2602,7 @@ class ProfileScreen @JvmOverloads constructor(
                 return
             }
             val inProfile = mode == RowMode.PROFILE
-            val dragging = inProfile && dragMoved && dragIndex == index
+            val dragging = drawingLifted
             val isSelected = mode != RowMode.ADD && packList.selected === this
             // The row whose version list is open counts as hovered, so it keeps its highlight and
             // hover icons while the pointer is over the list.
@@ -2681,6 +2824,9 @@ class ProfileScreen @JvmOverloads constructor(
             "Drop files" to "drop"
         )
         const val CHIP_HEIGHT = 12
+        const val PACK_ROW_HEIGHT = 22
+        /** How quickly sliding rows settle: larger is snappier. */
+        const val SLIDE_RATE = 18f
         /** Longest version label before it is cut off, so names keep some room. */
         const val UPDATE_LABEL_MAX = 90
 
