@@ -307,10 +307,14 @@ object ProfileManager {
     }
 
     /** Turns a pack off (or back on) inside a profile without removing it from the order. */
-    fun setPackDisabled(name: String, packId: String, disabled: Boolean) {
+    fun setPackDisabled(name: String, packId: String, disabled: Boolean) =
+        setPacksDisabled(name, listOf(packId), disabled)
+
+    /** Turns several packs of a profile off (or back on) at once. */
+    fun setPacksDisabled(name: String, packIds: Collection<String>, disabled: Boolean) {
         val profile = profiles[name] ?: return
         val current = profile.disabledPackIds.orEmpty()
-        val updated = if (disabled) (current + packId).distinct() else current - packId
+        val updated = if (disabled) (current + packIds).distinct() else current - packIds.toSet()
         profiles[name] = profile.copy(disabledPackIds = updated.ifEmpty { null })
         save()
     }

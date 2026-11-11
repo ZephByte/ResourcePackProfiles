@@ -8,6 +8,7 @@
 - **Replaces the vanilla pack screen** - Options > Resource Packs now opens Resource Pack Profiles directly; turn this off under **Settings** to get the vanilla screen with a Profiles button instead
 - **New interface** - one screen with your profiles on the left and the selected profile's packs and actions on the right, replacing the separate list and edit screens
 - **Edit in place** - add, remove, and drag to reorder packs; changes save immediately, with an undo for the last one
+- **Multi-select** - Ctrl+click, Shift+click and Ctrl+A select several packs, and adding, removing, switching off, moving, checking, downloading and trashing then apply to all of them
 - **Switch packs off** - untick a pack to skip it in a profile while keeping its place in the load order
 - **All Packs view** - see every installed pack and how many profiles use it, and move unused packs to a trash folder (undoable until you empty the trash)
 - **Update checker** - packs are checked for newer versions on Modrinth once per game session (you are asked first, and can turn it off in Settings); tick the updates you want, or **Select All Updates**, then click **Update N Selected**. A refresh button checks again on demand

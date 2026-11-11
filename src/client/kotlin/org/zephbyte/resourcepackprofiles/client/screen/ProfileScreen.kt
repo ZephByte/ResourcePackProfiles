@@ -132,6 +132,21 @@ class ProfileScreen @JvmOverloads constructor(
 
     /** Packs whose available update is ticked, i.e. included in "Update N Selected". None by default. */
     private val tickedUpdates = mutableSetOf<String>()
+
+    /**
+     * Packs picked in the pack list, file-browser style: a click picks one row, Ctrl+click adds or
+     * removes a row, Shift+click picks the range from [pickAnchor]. An action on a row that is one
+     * of several picked applies to all of them.
+     */
+    private val pickedPacks = linkedSetOf<String>()
+    /** Where a Shift+click range starts: the row last clicked without Shift. */
+    private var pickAnchor: String? = null
+    /** Set while a pack row handles a click, so the list's select-on-focus leaves the picks alone. */
+    private var rowClicking = false
+    /** A picked row pressed without modifiers: the picks narrow to it on release, unless dragged. */
+    private var collapseTo: String? = null
+    /** The picked packs being dragged together, in list order. */
+    private var dragGroup: List<String> = emptyList()
     /** Whether the first-run question was already shown by this screen. */
     private var firstRunShown = false
 
@@ -169,6 +184,7 @@ class ProfileScreen @JvmOverloads constructor(
     private lateinit var selectAllButton: FlatButton
     private lateinit var refreshButton: FlatButton
     private lateinit var browseAddButton: FlatButton
+    private lateinit var addPickedButton: FlatButton
     private lateinit var sortButton: FlatButton
     private lateinit var missingButton: FlatButton
     private lateinit var unusedButton: FlatButton
@@ -319,6 +335,12 @@ class ProfileScreen @JvmOverloads constructor(
         addButton = FlatButton(addX, actionRowY, 62, 16, t("button.resourcepackprofiles.add_packs")) { setAddMode(!addMode) }
         addRenderableWidget(addButton)
 
+        // Add mode: adds every picked pack at once.
+        addPickedButton = FlatButton(rightX + 8, footerY, 100, 16, t("button.resourcepackprofiles.add_picked", 0), style = FlatButton.Style.PRIMARY) {
+            addPacks(pickedInOrder())
+        }
+        addRenderableWidget(addPickedButton)
+
         packList = PackList(rightW - 2, footerY - 4 - packTop, packTop)
         packList.updateSizeAndPosition(rightW - 2, footerY - 4 - packTop, rightX + 1, packTop)
         addRenderableWidget(packList)
@@ -409,6 +431,7 @@ class ProfileScreen @JvmOverloads constructor(
         addMode = false
         packFilter = ""
         menu = null
+        clearPicks()
         rebuildProfileList()
         syncDetail(forceName = true)
     }
@@ -501,6 +524,68 @@ class ProfileScreen @JvmOverloads constructor(
         }
         packList.replaceEntries(rows)
         packList.setScrollAmount(scroll)
+        val shown = rows.mapTo(HashSet()) { it.packId }
+        pickedPacks.retainAll(shown)
+        if (pickAnchor !in shown) pickAnchor = null
+    }
+
+    // --- Picking several packs ---
+
+    private fun clearPicks() {
+        pickedPacks.clear()
+        pickAnchor = null
+        collapseTo = null
+    }
+
+    /** The picked packs in list order. */
+    private fun pickedInOrder(): List<String> = packList.children().map { it.packId }.filter { it in pickedPacks }
+
+    /** Whether [packId] is one of several picked packs, so its row's actions apply to all of them. */
+    private fun inMultiPick(packId: String) = pickedPacks.size > 1 && packId in pickedPacks
+
+    /** The packs an action on [packId]'s row applies to: all picked packs if it is picked, else just it. */
+    private fun targetsOf(packId: String): List<String> =
+        if (packId in pickedPacks) pickedInOrder() else listOf(packId)
+
+    /** Moves the list's cursor to [row]. Unless [keepPicks], the picks become just that row. */
+    private fun selectRow(row: PackRow, keepPicks: Boolean = false) {
+        if (!keepPicks) {
+            pickedPacks.clear()
+            // Add mode picks only on purpose (Ctrl/Shift), since a plain click adds the pack.
+            if (row.mode != RowMode.ADD) pickedPacks.add(row.packId)
+            pickAnchor = row.packId
+        }
+        val was = rowClicking
+        rowClicking = true
+        try {
+            packList.setSelected(row)
+        } finally {
+            rowClicking = was
+        }
+    }
+
+    /** Ctrl+click toggles [row]; Shift+click picks the range from the anchor (Ctrl+Shift adds it). */
+    private fun pickRow(row: PackRow, range: Boolean, toggle: Boolean) {
+        val ids = packList.children().map { it.packId }
+        val anchor = pickAnchor?.takeIf { it in ids }
+        when {
+            range && anchor != null -> {
+                val a = ids.indexOf(anchor)
+                val b = ids.indexOf(row.packId)
+                if (!toggle) pickedPacks.clear()
+                pickedPacks.addAll(ids.subList(minOf(a, b), maxOf(a, b) + 1))
+            }
+            toggle -> {
+                if (!pickedPacks.remove(row.packId)) pickedPacks.add(row.packId)
+                pickAnchor = row.packId
+            }
+            else -> {
+                pickedPacks.clear()
+                pickedPacks.add(row.packId)
+                pickAnchor = row.packId
+            }
+        }
+        selectRow(row, keepPicks = true)
     }
 
     /** Shows/hides the detail widgets for the current selection and reloads their contents. */
@@ -538,6 +623,7 @@ class ProfileScreen @JvmOverloads constructor(
         trashButton.visible = libraryMode
         updateAllButton.visible = false
         libraryDownloadButton.visible = false
+        addPickedButton.visible = false
         // Don't clobber the name while it is being typed, unless the selection itself changed.
         if (profile != null && (forceName || !nameBox.isFocused)) nameBox.value = profile.name
         if (filterBox.value != packFilter) filterBox.value = packFilter
@@ -548,6 +634,7 @@ class ProfileScreen @JvmOverloads constructor(
     private fun setAddMode(enabled: Boolean) {
         addMode = enabled
         packFilter = ""
+        clearPicks()
         syncDetail()
         if (enabled) setFocused(filterBox)
     }
@@ -789,25 +876,37 @@ class ProfileScreen @JvmOverloads constructor(
         showStatus(message)
     }
 
-    private fun addPack(packId: String) {
+    /** "Added Foo" for one pack, "Added 3 packs" for several. */
+    private fun packsMessage(ids: List<String>, one: String, many: String): Component =
+        if (ids.size == 1) t("status.resourcepackprofiles.$one", packName(ids[0])) else t("status.resourcepackprofiles.$many", ids.size)
+
+    /** Adds [ids] (in list order) to the profile; they end up at the top, in the same order. */
+    private fun addPacks(ids: List<String>) {
         val profile = selected ?: return
+        val fresh = ids.filter { it !in profile.packIds }
+        if (fresh.isEmpty()) return
         // Appended last = loaded last = highest priority, i.e. the top of the displayed list.
-        commitPacks(profile.packIds + packId, t("status.resourcepackprofiles.pack_added", packName(packId)))
+        commitPacks(profile.packIds + fresh.reversed(), packsMessage(fresh, "pack_added", "packs_added"))
     }
 
-    private fun removePack(packId: String) {
+    private fun removePacks(ids: List<String>) {
         val profile = selected ?: return
-        commitPacks(profile.packIds - packId, t("status.resourcepackprofiles.pack_removed", packName(packId)))
+        commitPacks(profile.packIds - ids.toSet(), packsMessage(ids, "pack_removed", "packs_removed"))
     }
 
-    /** Turns a pack off or on inside the profile without changing its place in the order. */
-    private fun togglePack(packId: String) {
+    /**
+     * Turns [ids] off or on inside the profile without changing their place in the order. They
+     * all follow [clicked]: off if it is on, on if it is off.
+     */
+    private fun togglePacks(ids: List<String>, clicked: String) {
         val profile = selected ?: return
-        val disable = !profile.isDisabled(packId)
-        ProfileManager.setPackDisabled(profile.name, packId, disable)
+        val disable = !profile.isDisabled(clicked)
+        ProfileManager.setPacksDisabled(profile.name, ids, disable)
         undo = { ProfileManager.putProfile(profile) }
-        val key = if (disable) "status.resourcepackprofiles.pack_disabled" else "status.resourcepackprofiles.pack_enabled"
-        showStatus(t(key, packName(packId)))
+        showStatus(
+            if (disable) packsMessage(ids, "pack_disabled", "packs_disabled")
+            else packsMessage(ids, "pack_enabled", "packs_enabled")
+        )
     }
 
     // --- All packs: deleting pack files ---
@@ -841,6 +940,21 @@ class ProfileScreen @JvmOverloads constructor(
         }
     }
 
+    /** Trashes [ids] from a row's x or Delete; several at once are confirmed with the list. */
+    private fun trashFromRow(ids: List<String>) {
+        if (ids.size <= 1) {
+            trashPacks(ids)
+            return
+        }
+        minecraft.showScreen(ConfirmDialogScreen(
+            this,
+            t("screen.resourcepackprofiles.trash_picked.title"),
+            t("screen.resourcepackprofiles.trash_picked.message", ids.size),
+            t("button.resourcepackprofiles.move_to_trash"),
+            items = ids.map { packName(it) }
+        ) { trashPacks(ids) })
+    }
+
     private fun onDeleteUnused() {
         val ids = unusedPackIds()
         if (ids.isEmpty()) return
@@ -869,6 +983,32 @@ class ProfileScreen @JvmOverloads constructor(
             undo = null
             showStatus(t("status.resourcepackprofiles.trash_emptied", removed))
         })
+    }
+
+    /**
+     * Moves every picked pack one row up ([delta] -1) or down (1), keeping them picked. Packs
+     * already against the end of the list stay, and the ones behind them close up.
+     */
+    private fun movePicked(delta: Int, focusId: String): Boolean {
+        val ids = displayIds().toMutableList()
+        val order: IntProgression = if (delta < 0) ids.indices else ids.indices.reversed()
+        var moved = false
+        for (i in order) {
+            val j = i + delta
+            if (ids[i] in pickedPacks && j in ids.indices && ids[j] !in pickedPacks) {
+                ids[j] = ids[i].also { ids[i] = ids[j] }
+                moved = true
+            }
+        }
+        if (moved) {
+            commitPacks(ids.reversed(), t("status.resourcepackprofiles.reordered"))
+            packList.children().firstOrNull { it.packId == focusId }?.let {
+                selectRow(it, keepPicks = true)
+                packList.setFocused(it)
+            }
+        }
+        // Consumed either way, so the list doesn't also move its cursor and drop the picks.
+        return true
     }
 
     /** Moves the pack at display [index] by [delta] rows and keeps it selected. */
@@ -1341,7 +1481,11 @@ class ProfileScreen @JvmOverloads constructor(
                 return true
             }
         }
-        return super.mouseClicked(event, doubled)
+        return try {
+            super.mouseClicked(event, doubled)
+        } finally {
+            rowClicking = false
+        }
     }
 
     override fun mouseDragged(event: MouseButtonEvent, dx: Double, dy: Double): Boolean {
@@ -1359,10 +1503,19 @@ class ProfileScreen @JvmOverloads constructor(
             else -> rows.forEachIndexed { i, row -> if (my >= row.y && my < row.y + row.height) target = i }
         }
         if (target != dragIndex) {
-            val id = ids.removeAt(dragIndex)
-            ids.add(target, id)
-            dragIndex = target
-            rebuildPackList()
+            // The pressed pack goes to the row under the pointer, with any other picked packs
+            // gathered around it in their list order.
+            val lead = ids[dragIndex]
+            val group = dragGroup.ifEmpty { listOf(lead) }
+            val rest = ids.filter { it !in group }
+            val start = (target - group.indexOf(lead)).coerceIn(0, rest.size)
+            val reordered = rest.subList(0, start) + group + rest.subList(start, rest.size)
+            if (reordered != ids) {
+                ids.clear()
+                ids.addAll(reordered)
+                rebuildPackList()
+            }
+            dragIndex = ids.indexOf(lead)
         }
         return true
     }
@@ -1371,13 +1524,20 @@ class ProfileScreen @JvmOverloads constructor(
         val ids = dragIds ?: return super.mouseReleased(event)
         val moved = dragMoved
         val index = dragIndex
+        val group = dragGroup
+        val collapse = collapseTo
         dragIds = null
         dragIndex = -1
         dragMoved = false
+        dragGroup = emptyList()
+        collapseTo = null
         if (moved) {
             commitPacks(ids.reversed(), t("status.resourcepackprofiles.reordered"))
             rebuildPackList()
-            packList.children().getOrNull(index)?.let { packList.setSelected(it) }
+            packList.children().getOrNull(index)?.let { selectRow(it, keepPicks = group.size > 1) }
+        } else if (collapse != null) {
+            // A plain click on one of several picked packs, without dragging: pick just that one.
+            packList.children().firstOrNull { it.packId == collapse }?.let { selectRow(it) }
         }
         // Still let the screen clear its own drag state.
         super.mouseReleased(event)
@@ -1401,6 +1561,10 @@ class ProfileScreen @JvmOverloads constructor(
                 return true
             }
         }
+        if (event.isEscape && (pickedPacks.size > 1 || (addMode && pickedPacks.isNotEmpty()))) {
+            clearPicks()
+            return true
+        }
         if (event.isEscape && addMode) {
             setAddMode(false)
             return true
@@ -1416,6 +1580,11 @@ class ProfileScreen @JvmOverloads constructor(
                 }
                 InputConstants.KEY_D -> if (!typing) {
                     onDuplicate()
+                    return true
+                }
+                InputConstants.KEY_A -> if (!typing && packList.visible && packList.children().isNotEmpty()) {
+                    pickedPacks.clear()
+                    pickedPacks.addAll(packList.children().map { it.packId })
                     return true
                 }
                 InputConstants.KEY_Z -> if (!typing) {
@@ -1576,6 +1745,13 @@ class ProfileScreen @JvmOverloads constructor(
                 footerRight =
                     if (chosen > 0) updateAllButton.x + updateAllButton.getWidth()
                     else selectAllButton.x + selectAllButton.getWidth()
+            }
+
+            addPickedButton.visible = addMode && pickedPacks.isNotEmpty()
+            if (addPickedButton.visible) {
+                val pickedLabel = t("button.resourcepackprofiles.add_picked", pickedPacks.size)
+                addPickedButton.setMessage(pickedLabel)
+                addPickedButton.setWidth(font.width(pickedLabel) + 16)
             }
 
             val fetchable = fetchableMissing(profile).size
@@ -1881,6 +2057,7 @@ class ProfileScreen @JvmOverloads constructor(
             addMode = false
             packFilter = ""
             menu = null
+            clearPicks()
             // A rename rebuilt the rows, so [entry] is stale; reselect by name instead.
             if (renamed) rebuildProfileList() else super.setSelected(entry)
             syncDetail(forceName = true)
@@ -1994,7 +2171,17 @@ class ProfileScreen @JvmOverloads constructor(
         }
     }
 
-    private inner class PackList(w: Int, h: Int, top: Int) : FlatList<PackRow>(w, h, top, 22)
+    private inner class PackList(w: Int, h: Int, top: Int) : FlatList<PackRow>(w, h, top, 22) {
+        // Called for clicks and keyboard navigation alike. Moving with the keys picks the row
+        // moved to, as in a file browser; row clicks manage the picks themselves.
+        override fun setSelected(entry: PackRow?) {
+            super.setSelected(entry)
+            if (rowClicking || entry == null) return
+            pickedPacks.clear()
+            if (entry.mode != RowMode.ADD) pickedPacks.add(entry.packId)
+            pickAnchor = entry.packId
+        }
+    }
 
     /**
      * One pack in the right-hand list. What it shows and does depends on [mode]:
@@ -2006,7 +2193,7 @@ class ProfileScreen @JvmOverloads constructor(
      *
      * Profile and library rows of pack files also get a check-for-updates button on hover.
      */
-    private inner class PackRow(val packId: String, private val mode: RowMode) : ObjectSelectionList.Entry<PackRow>() {
+    private inner class PackRow(val packId: String, val mode: RowMode) : ObjectSelectionList.Entry<PackRow>() {
 
         override fun getNarration(): Component = Component.literal(packName(packId))
 
@@ -2107,34 +2294,49 @@ class ProfileScreen @JvmOverloads constructor(
         private fun downloadRight() = labelX(usageLabel().first) - 8
         private fun downloadX() = downloadRight() - font.width(downloadWord()) - 9
 
+        /** Picked packs (or just this one) that can be checked on Modrinth. */
+        private fun checkTargets() = targetsOf(packId).filter { isPackFile(it) && it in packsById }
+
+        /** Updates of the picked packs (or just this one) whose files aren't downloaded yet. */
+        private fun downloadTargets() =
+            targetsOf(packId).mapNotNull { (checks[it] as? PackCheck.UpdateAvailable)?.update }.filter { !isInstalled(it) }
+
         override fun mouseClicked(event: MouseButtonEvent, doubled: Boolean): Boolean {
             if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) return false
+            // The row decides what the click does to the picks, so the list must not reset them.
+            rowClicking = true
             val mx = event.x()
+            val toggle = event.hasControlDownWithQuirk()
+            if (toggle || event.hasShiftDown()) {
+                pickRow(this, range = event.hasShiftDown(), toggle = toggle)
+                return true
+            }
             if (mode == RowMode.ADD) {
-                addPack(packId)
+                addPacks(targetsOf(packId))
                 return true
             }
             if (checkable && overCheck(mx)) {
-                checkPacks(listOf(packId), single = true)
+                val ids = checkTargets()
+                checkPacks(ids, single = ids.size == 1)
                 return true
             }
             val pending = update
             if (mode == RowMode.LIBRARY) {
                 when {
-                    deletable && overRemove(mx) -> trashPacks(listOf(packId))
+                    deletable && overRemove(mx) -> trashFromRow(targetsOf(packId).filter { isPackFile(it) })
                     pending != null && !isInstalled(pending) && mx >= downloadX() - 1 && mx < downloadRight() + 1 ->
-                        downloadOnly(listOf(pending))
-                    else -> packList.setSelected(this)
+                        downloadOnly(downloadTargets())
+                    else -> selectRow(this)
                 }
                 return true
             }
 
             if (overRemove(mx)) {
-                removePack(packId)
+                removePacks(targetsOf(packId))
                 return true
             }
             if (mx >= toggleX() - 2 && mx < toggleX() + TOGGLE_SIZE + 2) {
-                togglePack(packId)
+                togglePacks(targetsOf(packId), packId)
                 return true
             }
             if (versioned && overVersions(mx)) {
@@ -2142,12 +2344,23 @@ class ProfileScreen @JvmOverloads constructor(
                 return true
             }
             if (versioned && pending != null && overUpdateTick(mx, pending)) {
-                if (!tickedUpdates.remove(packId)) tickedUpdates.add(packId)
+                // Every picked pack with an update follows this one's tick.
+                val ids = targetsOf(packId).filter { checks[it] is PackCheck.UpdateAvailable }
+                if (packId in tickedUpdates) tickedUpdates.removeAll(ids.toSet()) else tickedUpdates.addAll(ids)
                 return true
             }
-            packList.setSelected(this)
+            // Pressing one of several picked packs keeps them all picked, so they can be dragged
+            // together; releasing without dragging narrows the picks to this one.
+            val group = if (inMultiPick(packId)) pickedInOrder() else listOf(packId)
+            if (group.size > 1) {
+                collapseTo = packId
+                selectRow(this, keepPicks = true)
+            } else {
+                selectRow(this)
+            }
             // Arm a drag; it only becomes a reorder once the mouse actually moves.
             dragIds = displayIds().toMutableList()
+            dragGroup = group
             dragIndex = index
             dragStartY = event.y()
             dragMoved = false
@@ -2160,14 +2373,14 @@ class ProfileScreen @JvmOverloads constructor(
             when (mode) {
                 RowMode.ADD -> {
                     if (event.isConfirmation || event.isSelection) {
-                        addPack(packId)
+                        addPacks(targetsOf(packId))
                         return true
                     }
                     return false
                 }
                 RowMode.LIBRARY -> {
                     if (isDelete && deletable) {
-                        trashPacks(listOf(packId))
+                        trashFromRow(targetsOf(packId).filter { isPackFile(it) })
                         return true
                     }
                     return false
@@ -2175,15 +2388,17 @@ class ProfileScreen @JvmOverloads constructor(
                 RowMode.PROFILE -> {}
             }
             if (isDelete) {
-                removePack(packId)
+                removePacks(targetsOf(packId))
                 return true
             }
-            // Shift+Up/Down reorders the focused pack (plain Up/Down navigates the list)
-            if (event.hasShiftDown() && event.isUp) return movePack(index, -1)
-            if (event.hasShiftDown() && event.isDown) return movePack(index, 1)
-            // Space or Enter switches the focused pack off and on.
+            // Shift+Up/Down reorders the focused pack, or all picked ones (plain Up/Down navigates)
+            if (event.hasShiftDown() && (event.isUp || event.isDown)) {
+                val delta = if (event.isUp) -1 else 1
+                return if (inMultiPick(packId)) movePicked(delta, packId) else movePack(index, delta)
+            }
+            // Space or Enter switches the focused pack (or all picked ones) off and on.
             if (event.isSelection) {
-                togglePack(packId)
+                togglePacks(targetsOf(packId), packId)
                 return true
             }
             return false
@@ -2197,10 +2412,14 @@ class ProfileScreen @JvmOverloads constructor(
             // hover icons while the pointer is over the list.
             val menuAnchor = menu != null && menuOwner == packId
             val rowHot = hovered || menuAnchor
+            // Picks are only marked when they mean something: several of them, or any in add mode.
+            val picked = packId in pickedPacks && (pickedPacks.size > 1 || mode == RowMode.ADD)
+            val many = inMultiPick(packId)
             when {
-                dragging -> context.fill(x, y, x + width, y + height, Theme.ROW_SELECTED)
+                dragging || picked -> context.fill(x, y, x + width, y + height, Theme.ROW_SELECTED)
                 rowHot || isSelected -> context.fill(x, y, x + width, y + height, Theme.ROW_HOVER)
             }
+            if (picked) context.fill(x, y, x + 2, y + height, Theme.ACCENT)
 
             val centerY = y + height / 2
             val mx = mouseX.toDouble()
@@ -2220,8 +2439,13 @@ class ProfileScreen @JvmOverloads constructor(
                     Icon.TICK.drawCentered(context, tx, ty, TOGGLE_SIZE, TOGGLE_SIZE, if (overToggle) Theme.TEXT else Theme.TEXT_SECONDARY)
                 }
                 if (overToggle) {
-                    val key = if (disabled) "tooltip.resourcepackprofiles.enable_pack" else "tooltip.resourcepackprofiles.disable_pack"
-                    context.setTooltipForNextFrame(t(key), mouseX, mouseY)
+                    val tip = when {
+                        many && disabled -> t("tooltip.resourcepackprofiles.enable_picked", pickedPacks.size)
+                        many -> t("tooltip.resourcepackprofiles.disable_picked", pickedPacks.size)
+                        disabled -> t("tooltip.resourcepackprofiles.enable_pack")
+                        else -> t("tooltip.resourcepackprofiles.disable_pack")
+                    }
+                    context.setTooltipForNextFrame(tip, mouseX, mouseY)
                 }
                 cursor = tx + TOGGLE_SIZE + 5
             }
@@ -2249,12 +2473,22 @@ class ProfileScreen @JvmOverloads constructor(
             val hotCheck = showCheck && overCheck(mx)
             if (showRemove) {
                 Icon.CLOSE.draw(context, removeX(), centerY - Icon.CLOSE.height / 2, if (hotRemove) Theme.DANGER else Theme.TEXT_SECONDARY)
-                if (hotRemove && !inProfile) context.setTooltipForNextFrame(t("tooltip.resourcepackprofiles.trash_pack"), mouseX, mouseY)
+                if (hotRemove) {
+                    val tip = when {
+                        inProfile && many -> t("tooltip.resourcepackprofiles.remove_picked", pickedPacks.size)
+                        inProfile -> null
+                        many -> t("tooltip.resourcepackprofiles.trash_picked", targetsOf(packId).count { isPackFile(it) })
+                        else -> t("tooltip.resourcepackprofiles.trash_pack")
+                    }
+                    if (tip != null) context.setTooltipForNextFrame(tip, mouseX, mouseY)
+                }
             }
             if (showCheck) {
                 Icon.REFRESH.draw(context, checkX(), centerY - Icon.REFRESH.height / 2, if (hotCheck) Theme.TEXT else Theme.TEXT_SECONDARY)
                 if (hotCheck) {
-                    val tip = checkResult() ?: t("tooltip.resourcepackprofiles.check_pack")
+                    val tip =
+                        if (many) t("tooltip.resourcepackprofiles.check_picked", checkTargets().size)
+                        else checkResult() ?: t("tooltip.resourcepackprofiles.check_pack")
                     context.setTooltipForNextFrame(tip, mouseX, mouseY)
                 }
             }
@@ -2282,7 +2516,9 @@ class ProfileScreen @JvmOverloads constructor(
                             context.fill(dx, chipY, dr, chipY + CHIP_HEIGHT, Theme.withAlpha(Theme.SUCCESS, if (over) 0.38f else 0.22f))
                             context.text(font, downloadWord(), dx + 5, chipY + 2, Theme.SUCCESS, true)
                             if (over) {
-                                val tip = t("tooltip.resourcepackprofiles.download_update", pending.currentVersion, pending.newVersion)
+                                val tip =
+                                    if (many) t("tooltip.resourcepackprofiles.download_picked", downloadTargets().size)
+                                    else t("tooltip.resourcepackprofiles.download_update", pending.currentVersion, pending.newVersion)
                                 context.setTooltipForNextFrame(tip, mouseX, mouseY)
                             }
                             rightEdge = dx - 6
@@ -2383,6 +2619,9 @@ class ProfileScreen @JvmOverloads constructor(
             "Space" to "toggle_pack",
             "Shift+Up/Down" to "move_pack",
             "Drag" to "drag_pack",
+            "Ctrl+Click" to "pick_pack",
+            "Shift+Click" to "pick_range",
+            "Ctrl+A" to "pick_all",
             "Drop files" to "drop"
         )
         const val CHIP_HEIGHT = 12

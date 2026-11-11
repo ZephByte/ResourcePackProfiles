@@ -19,6 +19,7 @@ A client-side Fabric mod for saving, managing, and sharing named resource pack l
 - **One screen:** profiles on the left, the selected profile's packs and actions on the right. No separate edit screen.
 - **Save and apply:** save your current packs as a profile with one click, and apply any profile without a restart.
 - **Edit in place:** add, remove, and drag to reorder packs. Changes save as you make them, with an undo for the last one.
+- **Select several packs:** Ctrl+click and Shift+click work like a file browser, so you can add, remove, switch off, move, check, or trash many packs at once.
 - **Search:** filter profiles by name or by the packs they contain.
 - **Favorites:** star profiles to pin them to the top of the list.
 - **Custom icons:** set an image for any profile. Profiles without one get an icon built from their packs' art.
@@ -77,6 +78,7 @@ To keep the vanilla screen, click **Settings** (top right) and untick **Replace 
 | Add packs | Click **Add Packs**, then click each pack to add |
 | Remove a pack | Hover the pack and click **x**, or select it and press **Delete** |
 | Reorder packs | Drag a pack, or select it and press **Shift+Up/Down** |
+| Act on several packs | **Ctrl+click** or **Shift+click** packs (**Ctrl+A** for all), then use any pack's buttons or keys |
 | Favorite a profile | Hover it and click the star |
 | Update packs | Packs with an update show the new version with a green tick box. Tick the ones you want, or click **Select All Updates**, then click **Update N Selected** |
 | Refresh updates | Click the refresh button above the pack list. Checks also run automatically once per game session unless you turn that off in **Settings** |
@@ -99,7 +101,7 @@ Deleted packs are moved to `resourcepackprofiles-trash` in your game folder, so 
 
 Edits to a profile are saved immediately. If you edit the profile that is currently applied, click **Apply Changes** to reload your packs.
 
-The **?** button (top right) lists every shortcut: **Enter** apply, **F2** rename, **Ctrl+F** search, **Ctrl+D** duplicate, **Ctrl+U** check for updates, **Del** delete, **Ctrl+Z** undo, **Space** switch a pack off or on, **Shift+Up/Down** move a pack.
+The **?** button (top right) lists every shortcut: **Enter** apply, **F2** rename, **Ctrl+F** search, **Ctrl+D** duplicate, **Ctrl+U** check for updates, **Del** delete, **Ctrl+Z** undo, **Space** switch a pack off or on, **Shift+Up/Down** move a pack, **Ctrl+click** / **Shift+click** / **Ctrl+A** select several packs.
 
 ---
 
