@@ -1,16 +1,24 @@
 # Changelog
 
-## Resource Pack Profiles - v1.1.0
+## Resource Pack Profiles - v2.0.0
 
-Adds a **pack update checker** to **Resource Pack Profiles** for Minecraft 26.1, 26.2, and 26.3.
+**Resource Pack Profiles** becomes a resource pack manager: a redesigned interface, pack updates, and tools to keep your pack folder tidy. For Minecraft 26.1, 26.2, and 26.3. Existing profiles and `.rpprofile` files keep working.
 
 ### Changes
-- **Update checker** - check a single pack (in the profile editor), a whole profile, or every profile for newer versions on Modrinth using the new ↻ buttons
-- **Safe updates** - updated packs are downloaded as new files and saved as an `(updated)` copy of the profile, so your existing packs and profiles keep working
-- **Verified downloads** - files are only downloaded from Modrinth and checked against their published SHA-512 before use
-- **Profile editor** - returning from the update screen keeps your unsaved edits
+- **Replaces the vanilla pack screen** - Options > Resource Packs now opens Resource Pack Profiles directly; turn this off under **Settings** to get the vanilla screen with a Profiles button instead
+- **New interface** - one screen with your profiles on the left and the selected profile's packs and actions on the right, replacing the separate list and edit screens
+- **Edit in place** - add, remove, and drag to reorder packs; changes save immediately, with an undo for the last one
+- **Switch packs off** - untick a pack to skip it in a profile while keeping its place in the load order
+- **All Packs view** - see every installed pack and how many profiles use it, and move unused packs to a trash folder (undoable until you empty the trash)
+- **Update checker** - packs are checked for newer versions on Modrinth once per game session (you are asked first, and can turn it off in Settings); tick the updates you want, or **Select All Updates**, then click **Update N Selected**. A refresh button checks again on demand
+- **Choose a version** - a pack's version list shows every version, so you can pick an older or newer one, or switch back to the one you had
+- **Safe updates** - updating switches the profile to the new file and keeps the old one, so other profiles are unaffected; Update All can save a backup copy of the profile first
+- **Download missing packs** - profiles remember which Modrinth version each pack is, so missing packs can be downloaded again, including in profiles someone shares with you
+- **Compatibility warnings** - packs made for an older or newer version of Minecraft are flagged
+- **Automatic switching (optional)** - while in a world or on a server, choose a profile to apply whenever you join it; off unless you set it up
+- **Search, drag and drop, shortcuts** - filter profiles by name or pack, drop `.rpprofile` or `.zip` files onto the screen, and use Enter, F2, Ctrl+F, Ctrl+D, and Ctrl+Z
 
-Packs that are not on Modrinth, and unzipped folder packs, are skipped. Nothing is checked until you click a ↻ button.
+Editing the active profile no longer reloads your packs on every change; click **Apply Changes** when you are done. Downloads only come from Modrinth and are checked against their published SHA-512. Packs that are not on Modrinth, and unzipped folder packs, are skipped by the update checker.
 
 ### Requirements
 | Minecraft | Fabric Loader | Fabric API | Fabric Language Kotlin | Mod Menu *(optional)* |
