@@ -4,7 +4,7 @@
 [![Fabric](https://img.shields.io/badge/mod%20loader-fabric-blue)](https://fabricmc.net/)
 [![Modrinth](https://img.shields.io/modrinth/v/resource-pack-profiles?label=modrinth&logo=modrinth&color=00AF5C)](https://modrinth.com/mod/resource-pack-profiles)
 [![CurseForge](https://img.shields.io/curseforge/v/1583478?label=curseforge&logo=curseforge&color=F16436)](https://www.curseforge.com/minecraft/mc-mods/resource-pack-profiles)
-[![License: MIT](https://img.shields.io/github/license/ZephByte/ResourcePackProfiles)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/ZephByte/ResourcePackProfiles)](LICENSE.txt)
 
 A client-side Fabric mod for managing resource packs. Save named load-order profiles and switch between them in seconds, keep packs up to date from Modrinth, and find new ones without leaving the game.
 
